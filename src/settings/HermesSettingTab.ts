@@ -79,6 +79,7 @@ export class HermesSettingTab extends PluginSettingTab {
           .onChange(async (v) => {
             this.plugin.settings.workingFolder = v.trim();
             await this.plugin.saveSettings();
+            this.plugin.refreshOpenViews();
           })
       );
 
@@ -91,6 +92,7 @@ export class HermesSettingTab extends PluginSettingTab {
         tg.setValue(this.plugin.settings.autoApproveTools).onChange(async (v) => {
           this.plugin.settings.autoApproveTools = v;
           await this.plugin.saveSettings();
+          this.plugin.refreshOpenViews();
         })
       );
 

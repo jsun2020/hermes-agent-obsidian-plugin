@@ -6,6 +6,7 @@
 import { ItemView, WorkspaceLeaf, MarkdownRenderer, setIcon, Notice } from "obsidian";
 import type HermesPlugin from "../main";
 import { ChatHandle, ChatMessage, HermesGatewayClient, ToolEvent, UsageInfo } from "../runtime/gatewayClient";
+import { resolveWorkingFolder } from "../runtime/context";
 
 export const VIEW_TYPE_HERMES = "hermes-chat";
 
@@ -31,6 +32,8 @@ export class HermesView extends ItemView {
   private includeNoteToggle!: HTMLInputElement;
   private includeSelectionToggle!: HTMLInputElement;
   private statusEl!: HTMLElement;
+  private folderChipEl!: HTMLElement;
+  private folderLabelEl!: HTMLElement;
 
   private tabs: Tab[] = [];
   private activeTabId = "";
@@ -97,12 +100,23 @@ export class HermesView extends ItemView {
       }
     });
     const inputActions = inputWrap.createDiv({ cls: "hermes-input-actions" });
-    this.statusEl = inputActions.createSpan({ cls: "hermes-status" });
+    const metaEl = inputActions.createDiv({ cls: "hermes-input-meta" });
+
+    // Working-folder indicator: shows the folder the agent operates in. Click
+    // opens the plugin settings to change it.
+    this.folderChipEl = metaEl.createDiv({ cls: "hermes-folder-chip" });
+    const folderIcon = this.folderChipEl.createSpan({ cls: "hermes-folder-icon" });
+    setIcon(folderIcon, "folder");
+    this.folderLabelEl = this.folderChipEl.createSpan({ cls: "hermes-folder-label" });
+    this.folderChipEl.onclick = () => this.openPluginSettings();
+
+    this.statusEl = metaEl.createSpan({ cls: "hermes-status" });
     this.sendBtn = inputActions.createEl("button", { cls: "hermes-send-btn", text: "Send" });
     this.sendBtn.onclick = () => void this.onSend();
 
     // First tab
     this.newTab();
+    this.refreshWorkingFolderIndicator();
   }
 
   async onClose(): Promise<void> {
@@ -178,6 +192,39 @@ export class HermesView extends ItemView {
     this.stopBtn.disabled = !running;
     this.sendBtn.disabled = running;
     this.statusEl.setText(running ? "Hermes is thinking..." : "");
+  }
+
+  /**
+   * Update the working-folder chip to reflect the resolved folder + tool-access
+   * state. Public so the settings tab can refresh it live after a change.
+   */
+  refreshWorkingFolderIndicator(): void {
+    if (!this.folderChipEl) return;
+    const base = this.plugin.getVaultBasePath();
+    const folder = resolveWorkingFolder(base, this.plugin.settings.workingFolder || "");
+    const autoApprove = this.plugin.settings.autoApproveTools !== false;
+    const name = folder ? folder.split(/[\\/]/).filter(Boolean).pop() || folder : "(no folder)";
+    this.folderLabelEl.setText(name);
+    this.folderChipEl.toggleClass("is-readonly", !autoApprove);
+    this.folderChipEl.setAttr(
+      "aria-label",
+      `Working folder: ${folder || "(unavailable)"}\n` +
+        `Tools: ${autoApprove ? "auto-approve ON (read/write)" : "OFF (read-only replies)"}\n` +
+        `Click to change in settings`
+    );
+  }
+
+  /** Open Obsidian settings on the Hermes Agent tab (best effort). */
+  private openPluginSettings(): void {
+    const settingApi = (this.app as unknown as {
+      setting?: { open(): void; openTabById(id: string): void };
+    }).setting;
+    if (settingApi?.open) {
+      settingApi.open();
+      settingApi.openTabById?.("hermes-agent");
+    } else {
+      new Notice("Open Settings -> Hermes Agent to set the working folder.");
+    }
   }
 
   // ---- sending ----

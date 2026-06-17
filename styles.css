@@ -218,6 +218,51 @@
   margin-top: 6px;
 }
 
+.hermes-input-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.hermes-folder-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 180px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: var(--font-ui-smaller);
+}
+
+.hermes-folder-chip:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.hermes-folder-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.hermes-folder-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.hermes-folder-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hermes-folder-chip.is-readonly {
+  opacity: 0.55;
+}
+
 .hermes-status {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);

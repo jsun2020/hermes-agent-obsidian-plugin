@@ -89,6 +89,14 @@ export default class HermesPlugin extends Plugin {
     return adapter instanceof FileSystemAdapter ? adapter.getBasePath() : "";
   }
 
+  /** Refresh the working-folder indicator in every open Hermes view. */
+  refreshOpenViews(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_HERMES)) {
+      const view = leaf.view;
+      if (view instanceof HermesView) view.refreshWorkingFolderIndicator();
+    }
+  }
+
   /** Reveal the Hermes view in the right sidebar and return it. */
   async activateView(): Promise<HermesView | null> {
     const { workspace } = this.app;
