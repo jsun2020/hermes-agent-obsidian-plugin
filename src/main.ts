@@ -1,4 +1,4 @@
-import { Editor, MarkdownView, Notice, Plugin, WorkspaceLeaf } from "obsidian";
+import { Editor, FileSystemAdapter, MarkdownView, Notice, Plugin, WorkspaceLeaf } from "obsidian";
 import { DEFAULT_SETTINGS, HermesSettings } from "./settings/types";
 import { HermesSettingTab } from "./settings/HermesSettingTab";
 import { HermesView, VIEW_TYPE_HERMES } from "./view/HermesView";
@@ -11,7 +11,10 @@ export default class HermesPlugin extends Plugin {
 
   async onload(): Promise<void> {
     await this.loadSettings();
-    this.client = new HermesGatewayClient(() => this.settings);
+    this.client = new HermesGatewayClient(
+      () => this.settings,
+      () => this.getVaultBasePath()
+    );
 
     this.registerView(VIEW_TYPE_HERMES, (leaf) => new HermesView(leaf, this));
 
@@ -74,6 +77,16 @@ export default class HermesPlugin extends Plugin {
   /** Get the active markdown editor view, if any. */
   getActiveMarkdownView(): MarkdownView | null {
     return this.app.workspace.getActiveViewOfType(MarkdownView);
+  }
+
+  /**
+   * Absolute filesystem path of the vault root, used as the agent's working
+   * directory. Empty string if the vault is not on a local filesystem (this
+   * plugin is desktop-only, so in practice it always resolves).
+   */
+  getVaultBasePath(): string {
+    const adapter = this.app.vault.adapter;
+    return adapter instanceof FileSystemAdapter ? adapter.getBasePath() : "";
   }
 
   /** Reveal the Hermes view in the right sidebar and return it. */

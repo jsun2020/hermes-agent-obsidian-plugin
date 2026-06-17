@@ -64,6 +64,27 @@ Open Settings -> Hermes Agent:
 - **Transport** — `Auto` recommended.
 - Optional: reasoning effort, include-full-note-content, request timeout, max tabs.
 
+### Agent workspace (file access)
+
+This is what makes Hermes a real collaborator instead of a chatbot: the vault becomes the
+agent's working directory, so it can read, write, search, and run multi-step workflows over your
+notes.
+
+- **Working folder** — the folder the agent operates in, relative to the vault root. Leave empty
+  to use the whole vault. An absolute path is also accepted. The plugin sends this to the gateway
+  as the run's `instructions` (Hermes has no `cwd` field), telling the agent to use file tools with
+  absolute paths under this folder.
+- **Auto-approve tool requests** (default **on**) — lets the agent use file read/write, search, and
+  terminal tools without prompting. When Hermes asks for permission mid-run, the plugin answers
+  `always` via `POST /v1/runs/{id}/approval`. **This grants the agent real read/write access to the
+  working folder.** Turn it off to get plain, tool-less replies (every tool request is then
+  cancelled and the run falls back to a normal chat completion).
+
+> **Windows note:** the gateway's shell/code-execution sandbox may be unavailable on Windows
+> (PowerShell can fail to start). File read/write/search tools do **not** need the shell and work
+> regardless, so note-centric tasks (read, summarise, edit, create) still work. Pure shell/bash
+> workflows are limited by the gateway environment, not the plugin.
+
 Click **Test connection** to verify reachability, the chosen transport, and the model list.
 
 ## Use

@@ -25,6 +25,18 @@ export interface HermesSettings {
   requestTimeoutMs: number;
   /** Maximum number of concurrent chat tabs. */
   maxTabs: number;
+  /**
+   * Working folder for the agent, relative to the vault root. Empty -> the
+   * vault root. An absolute path is used as-is. This becomes the agent's
+   * working directory (sent as the run's `instructions` system message).
+   */
+  workingFolder: string;
+  /**
+   * Auto-approve the agent's tool/command requests (file read/write, search,
+   * terminal) so it can actually act on the vault. When false, runs that need
+   * approval are cancelled and fall back to a plain (tool-less) chat reply.
+   */
+  autoApproveTools: boolean;
 }
 
 export const DEFAULT_SETTINGS: HermesSettings = {
@@ -35,5 +47,7 @@ export const DEFAULT_SETTINGS: HermesSettings = {
   reasoningEffort: "",
   includeNoteContent: true,
   requestTimeoutMs: 120000,
-  maxTabs: 3
+  maxTabs: 3,
+  workingFolder: "",
+  autoApproveTools: true
 };

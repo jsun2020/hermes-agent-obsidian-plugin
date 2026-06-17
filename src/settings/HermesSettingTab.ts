@@ -60,6 +60,40 @@ export class HermesSettingTab extends PluginSettingTab {
           })
       );
 
+    containerEl.createEl("h3", { text: "Agent workspace" });
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text:
+        "Gives Hermes your vault as its working directory so it can read, write, search, and run multi-step workflows over your notes."
+    });
+
+    new Setting(containerEl)
+      .setName("Working folder")
+      .setDesc(
+        "Folder the agent operates in, relative to the vault root. Leave empty to use the whole vault. An absolute path is also accepted."
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("(vault root)")
+          .setValue(this.plugin.settings.workingFolder)
+          .onChange(async (v) => {
+            this.plugin.settings.workingFolder = v.trim();
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Auto-approve tool requests")
+      .setDesc(
+        "Let the agent use file read/write, search, and terminal tools without prompting. This grants it real read/write access to the working folder. Turn off to get plain (tool-less) replies instead."
+      )
+      .addToggle((tg) =>
+        tg.setValue(this.plugin.settings.autoApproveTools).onChange(async (v) => {
+          this.plugin.settings.autoApproveTools = v;
+          await this.plugin.saveSettings();
+        })
+      );
+
     new Setting(containerEl)
       .setName("Transport")
       .setDesc("auto = detect via /v1/capabilities (prefer the richer Runs transport), else force one.")

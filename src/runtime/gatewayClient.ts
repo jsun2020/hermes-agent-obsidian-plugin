@@ -32,6 +32,7 @@ import {
   supportsRunsTransport,
   toolEventFromRunEvent
 } from "./protocol";
+import { contextFolderInstructions, resolveWorkingFolder } from "./context";
 
 export type { HermesCapabilities, ToolEvent, UsageInfo } from "./protocol";
 
@@ -71,10 +72,23 @@ interface RawResponse {
 export class HermesGatewayClient {
   private capsCache: { value: HermesCapabilities | null; expiresAt: number } | null = null;
 
-  constructor(private getSettings: () => HermesSettings) {}
+  constructor(
+    private getSettings: () => HermesSettings,
+    private getVaultBasePath: () => string = () => ""
+  ) {}
 
   private base(): string {
     return normaliseBaseUrl(this.getSettings().baseUrl);
+  }
+
+  /**
+   * The `instructions` system message that scopes the agent to its working
+   * folder (the vault root, or a configured sub-folder/absolute path). Hermes
+   * has no `cwd` field, so this is how the vault becomes the working directory.
+   */
+  private workingFolderInstructions(): string {
+    const folder = resolveWorkingFolder(this.getVaultBasePath() || "", this.getSettings().workingFolder || "");
+    return contextFolderInstructions(folder);
   }
 
   private authHeaders(): Record<string, string> {
@@ -249,7 +263,10 @@ export class HermesGatewayClient {
     finish: (error?: string, sessionId?: string) => void
   ): void {
     const s = this.getSettings();
-    const messages: ChatMessage[] = [...history, { role: "user", content: input }];
+    const messages: ChatMessage[] = [];
+    const instructions = this.workingFolderInstructions();
+    if (instructions) messages.push({ role: "system", content: instructions });
+    messages.push(...history, { role: "user", content: input });
     const bodyObj: Record<string, unknown> = {
       model: s.model || "hermes-agent",
       messages,
@@ -372,6 +389,8 @@ export class HermesGatewayClient {
       input,
       conversation_history: history.map((m) => ({ role: m.role, content: m.content }))
     };
+    const instructions = this.workingFolderInstructions();
+    if (instructions) bodyObj.instructions = instructions;
     if (s.reasoningEffort) bodyObj.reasoning_effort = s.reasoningEffort;
     if (sessionId) bodyObj.session_id = sessionId;
 
@@ -437,8 +456,22 @@ export class HermesGatewayClient {
         return;
       }
       if (name === "approval.request") {
-        // Approval UI is out of scope for now; cancel + fall back so the user
-        // is never deadlocked waiting on a hidden approval prompt.
+        // The agent is asking permission to use a tool (file read/write, search,
+        // terminal). Auto-approve so the vault really is its working directory;
+        // otherwise we'd deadlock or have to fall back to a tool-less reply.
+        if (this.getSettings().autoApproveTools !== false && runId) {
+          const command = typeof raw.command === "string" ? raw.command : "";
+          cb.onToolEvent?.({
+            name: "approval",
+            status: "completed",
+            preview: command ? `auto-approved: ${command}` : "auto-approved"
+          });
+          // Respond "always" + resolve_all so repeated identical requests don't
+          // re-prompt; keep listening on the existing event stream.
+          this.postRunApproval(apiUrl, runId, "always");
+          return;
+        }
+        // Manual mode: no approval UI, so cancel + fall back to a plain reply.
         if (runId) this.postRunStop(apiUrl, runId);
         fallback();
         return;
@@ -543,6 +576,29 @@ export class HermesGatewayClient {
     try {
       const req = this.requester(url).request(url, { method: "POST", headers: this.authHeaders() });
       req.on("error", () => {});
+      req.end();
+    } catch {
+      /* best effort */
+    }
+  }
+
+  /** Answer a pending tool-approval request for a run. */
+  private postRunApproval(
+    apiUrl: string,
+    runId: string,
+    choice: "once" | "session" | "always" | "deny"
+  ): void {
+    const url = `${apiUrl}/v1/runs/${encodeURIComponent(runId)}/approval`;
+    try {
+      const payload = Buffer.from(JSON.stringify({ choice, resolve_all: true }), "utf-8");
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "Content-Length": String(payload.length),
+        ...this.authHeaders()
+      };
+      const req = this.requester(url).request(url, { method: "POST", headers });
+      req.on("error", () => {});
+      req.write(payload);
       req.end();
     } catch {
       /* best effort */
