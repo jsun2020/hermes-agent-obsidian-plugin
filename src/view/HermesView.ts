@@ -3,12 +3,23 @@
 // Pure Obsidian DOM API (no React), mirroring Claudian's approach. Each tab
 // owns its own conversation state, messages container, and in-flight handle.
 
-import { ItemView, WorkspaceLeaf, MarkdownRenderer, setIcon, Notice } from "obsidian";
+import { ItemView, WorkspaceLeaf, MarkdownRenderer, Menu, setIcon, Notice } from "obsidian";
 import type HermesPlugin from "../main";
 import { ChatHandle, ChatMessage, HermesGatewayClient, ToolEvent, UsageInfo } from "../runtime/gatewayClient";
 import { resolveWorkingFolder } from "../runtime/context";
 
 export const VIEW_TYPE_HERMES = "hermes-chat";
+
+/** Minimal shape of Electron's remote dialog, obtained via require("electron"). */
+interface ElectronRemote {
+  dialog: {
+    showOpenDialog(opts: {
+      properties: string[];
+      title?: string;
+      defaultPath?: string;
+    }): Promise<{ canceled: boolean; filePaths: string[] }>;
+  };
+}
 
 interface Tab {
   id: string;
@@ -18,6 +29,7 @@ interface Tab {
   handle: ChatHandle | null;
   bodyEl: HTMLElement; // scroll container holding this tab's messages
   tabButtonEl: HTMLElement;
+  tokensUsed: number; // cumulative session tokens for this tab
 }
 
 export class HermesView extends ItemView {
@@ -32,6 +44,9 @@ export class HermesView extends ItemView {
   private includeNoteToggle!: HTMLInputElement;
   private includeSelectionToggle!: HTMLInputElement;
   private statusEl!: HTMLElement;
+  private metaModelEl!: HTMLElement;
+  private metaThinkingEl!: HTMLElement;
+  private metaTokensEl!: HTMLElement;
   private folderChipEl!: HTMLElement;
   private folderLabelEl!: HTMLElement;
 
@@ -100,23 +115,42 @@ export class HermesView extends ItemView {
       }
     });
     const inputActions = inputWrap.createDiv({ cls: "hermes-input-actions" });
+
+    // Meta bar (model | thinking | tokens | working folder), like Claudian's footer.
     const metaEl = inputActions.createDiv({ cls: "hermes-input-meta" });
 
-    // Working-folder indicator: shows the folder the agent operates in. Click
-    // opens the plugin settings to change it.
+    this.metaModelEl = metaEl.createDiv({
+      cls: "hermes-meta-item hermes-meta-model",
+      attr: { "aria-label": "Model — click for settings" }
+    });
+    this.metaModelEl.onclick = () => this.openPluginSettings();
+
+    this.metaThinkingEl = metaEl.createDiv({
+      cls: "hermes-meta-item hermes-meta-thinking",
+      attr: { "aria-label": "Reasoning effort — click to change" }
+    });
+    this.metaThinkingEl.onclick = (e) => this.showThinkingMenu(e);
+
+    this.metaTokensEl = metaEl.createDiv({
+      cls: "hermes-meta-item hermes-meta-tokens",
+      attr: { "aria-label": "Session tokens used in this tab" }
+    });
+
+    // Working-folder chip: click opens a native folder picker (like Claudian).
     this.folderChipEl = metaEl.createDiv({ cls: "hermes-folder-chip" });
     const folderIcon = this.folderChipEl.createSpan({ cls: "hermes-folder-icon" });
     setIcon(folderIcon, "folder");
     this.folderLabelEl = this.folderChipEl.createSpan({ cls: "hermes-folder-label" });
-    this.folderChipEl.onclick = () => this.openPluginSettings();
+    this.folderChipEl.onclick = () => void this.pickWorkingFolder();
 
-    this.statusEl = metaEl.createSpan({ cls: "hermes-status" });
-    this.sendBtn = inputActions.createEl("button", { cls: "hermes-send-btn", text: "Send" });
+    const rightEl = inputActions.createDiv({ cls: "hermes-input-actions-right" });
+    this.statusEl = rightEl.createSpan({ cls: "hermes-status" });
+    this.sendBtn = rightEl.createEl("button", { cls: "hermes-send-btn", text: "Send" });
     this.sendBtn.onclick = () => void this.onSend();
 
     // First tab
     this.newTab();
-    this.refreshWorkingFolderIndicator();
+    this.refreshMetaBar();
   }
 
   async onClose(): Promise<void> {
@@ -140,7 +174,8 @@ export class HermesView extends ItemView {
       messages: [],
       handle: null,
       bodyEl,
-      tabButtonEl
+      tabButtonEl,
+      tokensUsed: 0
     };
 
     const label = tabButtonEl.createSpan({ cls: "hermes-tab-label", text: tab.title });
@@ -164,6 +199,7 @@ export class HermesView extends ItemView {
       t.tabButtonEl.toggleClass("is-active", active);
     }
     this.refreshRunningState();
+    this.refreshMetaBar();
   }
 
   private closeTab(id: string): void {
@@ -195,14 +231,30 @@ export class HermesView extends ItemView {
   }
 
   /**
-   * Update the working-folder chip to reflect the resolved folder + tool-access
-   * state. Public so the settings tab can refresh it live after a change.
+   * Refresh the footer meta bar (model, reasoning effort, session tokens, and
+   * the working-folder chip). Public so the settings tab can refresh it live.
    */
-  refreshWorkingFolderIndicator(): void {
+  refreshMetaBar(): void {
     if (!this.folderChipEl) return;
+    const s = this.plugin.settings;
+
+    // Model
+    this.metaModelEl.setText(s.model || "hermes-agent");
+
+    // Reasoning effort
+    this.metaThinkingEl.empty();
+    this.metaThinkingEl.createSpan({ cls: "hermes-meta-key", text: "Thinking: " });
+    this.metaThinkingEl.createSpan({ cls: "hermes-meta-val", text: s.reasoningEffort || "default" });
+
+    // Session tokens (active tab)
+    const tokens = this.activeTab()?.tokensUsed || 0;
+    this.metaTokensEl.setText(tokens > 0 ? this.formatTokens(tokens) : "");
+    this.metaTokensEl.toggleClass("hermes-hidden", tokens <= 0);
+
+    // Working folder
     const base = this.plugin.getVaultBasePath();
-    const folder = resolveWorkingFolder(base, this.plugin.settings.workingFolder || "");
-    const autoApprove = this.plugin.settings.autoApproveTools !== false;
+    const folder = resolveWorkingFolder(base, s.workingFolder || "");
+    const autoApprove = s.autoApproveTools !== false;
     const name = folder ? folder.split(/[\\/]/).filter(Boolean).pop() || folder : "(no folder)";
     this.folderLabelEl.setText(name);
     this.folderChipEl.toggleClass("is-readonly", !autoApprove);
@@ -210,8 +262,93 @@ export class HermesView extends ItemView {
       "aria-label",
       `Working folder: ${folder || "(unavailable)"}\n` +
         `Tools: ${autoApprove ? "auto-approve ON (read/write)" : "OFF (read-only replies)"}\n` +
-        `Click to change in settings`
+        `Click to choose a folder`
     );
+  }
+
+  /** "1.2k tokens" / "850 tokens". */
+  private formatTokens(n: number): string {
+    return n >= 1000 ? `${(n / 1000).toFixed(1)}k tokens` : `${n} tokens`;
+  }
+
+  /** Context menu to pick the reasoning effort, updating settings live. */
+  private showThinkingMenu(evt: MouseEvent): void {
+    const menu = new Menu();
+    const current = this.plugin.settings.reasoningEffort || "";
+    const options: Array<{ value: string; label: string }> = [
+      { value: "", label: "default" },
+      { value: "minimal", label: "minimal" },
+      { value: "low", label: "low" },
+      { value: "medium", label: "medium" },
+      { value: "high", label: "high" },
+      { value: "xhigh", label: "xhigh" }
+    ];
+    for (const opt of options) {
+      menu.addItem((item) =>
+        item
+          .setTitle(opt.label)
+          .setChecked(current === opt.value)
+          .onClick(async () => {
+            this.plugin.settings.reasoningEffort = opt.value;
+            await this.plugin.saveSettings();
+            this.plugin.refreshOpenViews();
+          })
+      );
+    }
+    menu.showAtMouseEvent(evt);
+  }
+
+  /**
+   * Open a native folder-selection dialog (Electron remote) and store the chosen
+   * folder as the agent's working directory. Mirrors Claudian's picker. Falls
+   * back to opening settings if the dialog API is unavailable.
+   */
+  private async pickWorkingFolder(): Promise<void> {
+    let remote: ElectronRemote | undefined;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      remote = (require("electron") as { remote?: ElectronRemote }).remote;
+    } catch {
+      remote = undefined;
+    }
+    if (!remote?.dialog?.showOpenDialog) {
+      new Notice("Native folder picker unavailable. Set the working folder in settings.");
+      this.openPluginSettings();
+      return;
+    }
+    const base = this.plugin.getVaultBasePath();
+    try {
+      const result = await remote.dialog.showOpenDialog({
+        properties: ["openDirectory"],
+        title: "Select Hermes working folder",
+        ...(base ? { defaultPath: base } : {})
+      });
+      if (result.canceled || !result.filePaths || result.filePaths.length === 0) return;
+      const picked = result.filePaths[0];
+      this.plugin.settings.workingFolder = this.toStoredFolder(picked, base);
+      await this.plugin.saveSettings();
+      this.plugin.refreshOpenViews();
+      new Notice(`Hermes working folder: ${picked}`);
+    } catch (e) {
+      new Notice(`Could not open folder picker: ${(e as Error)?.message || e}`);
+    }
+  }
+
+  /**
+   * Store the picked folder as vault-relative when it is inside the vault (more
+   * portable), the empty string when it is the vault root, or the absolute path
+   * when it is outside the vault.
+   */
+  private toStoredFolder(picked: string, base: string): string {
+    const norm = (p: string) => p.replace(/[\\/]+$/, "");
+    const p = norm(picked);
+    const b = norm(base);
+    if (!b) return p;
+    if (p.toLowerCase() === b.toLowerCase()) return "";
+    const sep = b.includes("\\") ? "\\" : "/";
+    const prefix = (b + sep).toLowerCase();
+    if (p.toLowerCase().startsWith(prefix)) return p.slice((b + sep).length);
+    return p;
   }
 
   /** Open Obsidian settings on the Hermes Agent tab (best effort). */
@@ -316,6 +453,8 @@ export class HermesView extends ItemView {
           assistant.usageEl.setText(
             `tokens: ${u.totalTokens} (in ${u.promptTokens} / out ${u.completionTokens})`
           );
+          tab.tokensUsed += u.totalTokens;
+          if (tab.id === this.activeTabId) this.refreshMetaBar();
         },
         onError: (msg) => {
           assistant.contentEl.empty();

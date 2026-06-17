@@ -93,7 +93,7 @@ export default class HermesPlugin extends Plugin {
   refreshOpenViews(): void {
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_HERMES)) {
       const view = leaf.view;
-      if (view instanceof HermesView) view.refreshWorkingFolderIndicator();
+      if (view instanceof HermesView) view.refreshMetaBar();
     }
   }
 

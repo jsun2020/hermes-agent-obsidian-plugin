@@ -218,11 +218,55 @@
   margin-top: 6px;
 }
 
-.hermes-input-meta {
+.hermes-input-actions-right {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.hermes-input-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
   min-width: 0;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.hermes-meta-item {
+  white-space: nowrap;
+}
+
+.hermes-meta-model,
+.hermes-meta-thinking {
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.hermes-meta-model:hover,
+.hermes-meta-thinking:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.hermes-meta-model {
+  color: var(--text-accent);
+  font-weight: 600;
+}
+
+.hermes-meta-val {
+  color: var(--text-normal);
+}
+
+.hermes-meta-tokens {
+  color: var(--text-faint);
+}
+
+.hermes-hidden {
+  display: none;
 }
 
 .hermes-folder-chip {

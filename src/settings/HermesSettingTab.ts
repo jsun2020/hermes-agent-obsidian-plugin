@@ -70,7 +70,7 @@ export class HermesSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Working folder")
       .setDesc(
-        "Folder the agent operates in, relative to the vault root. Leave empty to use the whole vault. An absolute path is also accepted."
+        "Folder the agent operates in, relative to the vault root. Leave empty to use the whole vault. An absolute path is also accepted. Tip: click the folder chip in the chat footer to pick a folder visually."
       )
       .addText((text) =>
         text

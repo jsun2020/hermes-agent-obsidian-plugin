@@ -73,7 +73,9 @@ notes.
 - **Working folder** — the folder the agent operates in, relative to the vault root. Leave empty
   to use the whole vault. An absolute path is also accepted. The plugin sends this to the gateway
   as the run's `instructions` (Hermes has no `cwd` field), telling the agent to use file tools with
-  absolute paths under this folder.
+  absolute paths under this folder. The quickest way to set it is the **folder chip** in the chat
+  footer — click it to open a native folder picker (folders inside the vault are stored relative,
+  outside the vault as an absolute path).
 - **Auto-approve tool requests** (default **on**) — lets the agent use file read/write, search, and
   terminal tools without prompting. When Hermes asks for permission mid-run, the plugin answers
   `always` via `POST /v1/runs/{id}/approval`. **This grants the agent real read/write access to the
@@ -99,6 +101,18 @@ Click **Test connection** to verify reachability, the chosen transport, and the 
   - **Send selection to Hermes**
 - The **+** button adds a tab; each tab is an independent conversation. The **stop** (square)
   button cancels the in-flight reply.
+
+### Chat footer (meta bar)
+
+Below the input, a Claudian-style meta bar shows, left to right:
+
+- **Model** — the model id (`hermes-agent` or your configured model). Click to open settings.
+- **Thinking: <effort>** — the reasoning effort. Click to pick one (default/minimal/low/medium/
+  high/xhigh) from a menu, applied immediately.
+- **Session tokens** — cumulative tokens used in the active tab (shown once the first reply
+  reports usage).
+- **Folder chip** — the agent's working folder. Click to open a **native folder picker**; the chip
+  dims when auto-approve is off (read-only).
 
 ## Manual test checklist
 
