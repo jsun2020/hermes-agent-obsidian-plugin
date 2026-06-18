@@ -107,3 +107,77 @@ export function chatDeltaContent(json: unknown): string {
   const delta = j?.choices?.[0]?.delta?.content;
   return typeof delta === "string" ? delta : "";
 }
+
+// ---- footer meta-bar helpers (model name, context gauge, greeting) ----------
+//
+// The gateway speaks the meta-label "hermes-agent" at the API layer; the real
+// underlying model (e.g. "gpt-5.5") lives in Hermes Desktop's config and is only
+// observable to a pure API client through /v1/models. These helpers mirror the
+// desktop's own footer logic (display = last path segment of the model id; the
+// context gauge = latest turn's prompt tokens / the model's context window).
+
+/**
+ * Human-friendly model label from a raw model id. Strips a provider prefix
+ * ("openai-codex/gpt-5.5" -> "gpt-5.5") and a "@base_url" suffix
+ * ("gpt-5.5@https://..." -> "gpt-5.5"). Returns "" for blank input.
+ */
+export function humanizeModel(raw: string): string {
+  const s = (raw || "").trim();
+  if (!s) return "";
+  const beforeAt = s.split("@")[0];
+  const lastSeg = beforeAt.split("/").pop() || beforeAt;
+  return lastSeg.trim();
+}
+
+/** Generic fallback when the model's context window is unknown. */
+export const CONTEXT_WINDOW_DEFAULT = 200000;
+
+/** Known context windows by bare model id (gpt-5 family on Codex = 272k). */
+const KNOWN_CONTEXT_WINDOWS: Record<string, number> = {
+  "gpt-5.5": 272000,
+  "gpt-5.4": 272000,
+  "gpt-5.3": 272000,
+  "gpt-5.2": 272000,
+  "gpt-5.1": 272000,
+  "gpt-5": 272000
+};
+
+/**
+ * Context-window size (in tokens) for a model. Prefers a value advertised by
+ * the gateway's /v1/models (authoritative), then a known-model table, then the
+ * gpt-5 family default, then the generic default.
+ */
+export function contextWindowFor(modelId: string, advertised?: number): number {
+  if (typeof advertised === "number" && advertised > 0) return advertised;
+  const id = humanizeModel(modelId).toLowerCase();
+  if (KNOWN_CONTEXT_WINDOWS[id]) return KNOWN_CONTEXT_WINDOWS[id];
+  if (id.startsWith("gpt-5")) return 272000;
+  return CONTEXT_WINDOW_DEFAULT;
+}
+
+/**
+ * Percentage of the context window occupied by the latest turn's prompt tokens.
+ * Clamped to 0..100. Mirrors Hermes Desktop's ContextGauge formula.
+ */
+export function contextPercent(usedPromptTokens: number, contextWindow: number): number {
+  if (!contextWindow || contextWindow <= 0) return 0;
+  const pct = Math.round((usedPromptTokens / contextWindow) * 100);
+  return Math.min(100, Math.max(0, pct));
+}
+
+/**
+ * Greeting options for the empty-chat state, personalized when a name is set
+ * (mirrors Claudian's greeting array). The view picks one at random.
+ */
+export function greetingOptions(userName: string): string[] {
+  const name = (userName || "").trim();
+  const p = (base: string, fallback?: string): string =>
+    name ? `${base}, ${name}` : fallback ?? base;
+  return [
+    p("What's new") + "?",
+    p("Welcome back") + "!",
+    p("How's it going") + "?",
+    p("Hey there"),
+    name ? `Hi ${name}, how can I help?` : "How can I help you today?"
+  ];
+}

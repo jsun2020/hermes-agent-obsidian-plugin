@@ -102,15 +102,25 @@ Click **Test connection** to verify reachability, the chosen transport, and the 
 - The **+** button adds a tab; each tab is an independent conversation. The **stop** (square)
   button cancels the in-flight reply.
 
+### Greeting
+
+An empty chat shows a greeting. Set **Your name** in settings to personalize it (e.g. "What's new,
+Jason?"); leave it empty for a neutral "How can I help you today?". The greeting disappears once you
+send the first message.
+
 ### Chat footer (meta bar)
 
 Below the input, a Claudian-style meta bar shows, left to right:
 
-- **Model** — the model id (`hermes-agent` or your configured model). Click to open settings.
+- **Model** — the *real* underlying model id (e.g. `gpt-5.5`), resolved from the gateway's
+  `/v1/models` rather than the `hermes-agent` meta-label. If you set an explicit Model in settings,
+  that is shown instead. Click to open settings.
 - **Thinking: <effort>** — the reasoning effort. Click to pick one (default/minimal/low/medium/
   high/xhigh) from a menu, applied immediately.
-- **Session tokens** — cumulative tokens used in the active tab (shown once the first reply
-  reports usage).
+- **Context gauge** — a donut + percentage showing how full the model's context window is. The
+  percentage is the latest turn's prompt tokens divided by the model's context window (e.g. 272k for
+  gpt-5.5; the gateway-advertised size is preferred when available). It appears once a reply reports
+  usage, and grows as the conversation lengthens.
 - **Folder chip** — the agent's working folder. Click to open a **native folder picker**; the chip
   dims when auto-approve is off (read-only).
 

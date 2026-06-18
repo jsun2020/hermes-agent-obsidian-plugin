@@ -37,6 +37,8 @@ export interface HermesSettings {
    * approval are cancelled and fall back to a plain (tool-less) chat reply.
    */
   autoApproveTools: boolean;
+  /** Your name, used to personalize the empty-chat greeting. Optional. */
+  userName: string;
 }
 
 export const DEFAULT_SETTINGS: HermesSettings = {
@@ -49,5 +51,6 @@ export const DEFAULT_SETTINGS: HermesSettings = {
   requestTimeoutMs: 120000,
   maxTabs: 3,
   workingFolder: "",
-  autoApproveTools: true
+  autoApproveTools: true,
+  userName: ""
 };

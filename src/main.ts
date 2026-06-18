@@ -89,11 +89,19 @@ export default class HermesPlugin extends Plugin {
     return adapter instanceof FileSystemAdapter ? adapter.getBasePath() : "";
   }
 
-  /** Refresh the working-folder indicator in every open Hermes view. */
+  /** Refresh the footer meta bar in every open Hermes view. */
   refreshOpenViews(): void {
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_HERMES)) {
       const view = leaf.view;
       if (view instanceof HermesView) view.refreshMetaBar();
+    }
+  }
+
+  /** Re-resolve the active model (after a model/URL/key change) in open views. */
+  reloadModelInViews(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_HERMES)) {
+      const view = leaf.view;
+      if (view instanceof HermesView) void view.loadResolvedModel();
     }
   }
 

@@ -262,11 +262,57 @@
 }
 
 .hermes-meta-tokens {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   color: var(--text-faint);
+}
+
+/* Context-usage donut gauge (conic-gradient ring, like Claudian's gauge). */
+.hermes-gauge {
+  --hermes-gauge-pct: 0;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: conic-gradient(
+    var(--text-accent) calc(var(--hermes-gauge-pct) * 1%),
+    var(--background-modifier-border) 0
+  );
+  position: relative;
+  flex-shrink: 0;
+}
+
+.hermes-gauge::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: var(--background-primary);
+}
+
+.hermes-gauge-pct {
+  white-space: nowrap;
 }
 
 .hermes-hidden {
   display: none;
+}
+
+/* Empty-chat greeting. */
+.hermes-greeting {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 120px;
+  padding: 16px;
+}
+
+.hermes-greeting-text {
+  font-size: 1.5em;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-align: center;
 }
 
 .hermes-folder-chip {

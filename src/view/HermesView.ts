@@ -7,6 +7,7 @@ import { ItemView, WorkspaceLeaf, MarkdownRenderer, Menu, setIcon, Notice } from
 import type HermesPlugin from "../main";
 import { ChatHandle, ChatMessage, HermesGatewayClient, ToolEvent, UsageInfo } from "../runtime/gatewayClient";
 import { resolveWorkingFolder } from "../runtime/context";
+import { contextPercent, contextWindowFor, greetingOptions, humanizeModel } from "../runtime/protocol";
 
 export const VIEW_TYPE_HERMES = "hermes-chat";
 
@@ -30,6 +31,8 @@ interface Tab {
   bodyEl: HTMLElement; // scroll container holding this tab's messages
   tabButtonEl: HTMLElement;
   tokensUsed: number; // cumulative session tokens for this tab
+  lastPromptTokens: number; // latest turn's prompt tokens = current context occupancy
+  greeting?: string; // chosen empty-state greeting (kept stable per tab)
 }
 
 export class HermesView extends ItemView {
@@ -47,8 +50,13 @@ export class HermesView extends ItemView {
   private metaModelEl!: HTMLElement;
   private metaThinkingEl!: HTMLElement;
   private metaTokensEl!: HTMLElement;
+  private gaugeEl!: HTMLElement;
+  private gaugePctEl!: HTMLElement;
   private folderChipEl!: HTMLElement;
   private folderLabelEl!: HTMLElement;
+
+  /** Active model id + context window, resolved from the gateway (/v1/models). */
+  private resolvedModel: { id: string; contextWindow: number } | null = null;
 
   private tabs: Tab[] = [];
   private activeTabId = "";
@@ -131,10 +139,14 @@ export class HermesView extends ItemView {
     });
     this.metaThinkingEl.onclick = (e) => this.showThinkingMenu(e);
 
+    // Context gauge: a donut showing the % of the model's context window used
+    // by the latest turn's prompt tokens (like Claudian's gauge).
     this.metaTokensEl = metaEl.createDiv({
       cls: "hermes-meta-item hermes-meta-tokens",
-      attr: { "aria-label": "Session tokens used in this tab" }
+      attr: { "aria-label": "Context window used in this tab" }
     });
+    this.gaugeEl = this.metaTokensEl.createSpan({ cls: "hermes-gauge" });
+    this.gaugePctEl = this.metaTokensEl.createSpan({ cls: "hermes-gauge-pct" });
 
     // Working-folder chip: click opens a native folder picker (like Claudian).
     this.folderChipEl = metaEl.createDiv({ cls: "hermes-folder-chip" });
@@ -150,6 +162,18 @@ export class HermesView extends ItemView {
 
     // First tab
     this.newTab();
+    this.refreshMetaBar();
+    // Resolve the real model name / context window from the gateway (async).
+    void this.loadResolvedModel();
+  }
+
+  /** Query the gateway for the active model + context window, then refresh. */
+  async loadResolvedModel(): Promise<void> {
+    try {
+      this.resolvedModel = await this.client.resolveActiveModel();
+    } catch {
+      this.resolvedModel = null;
+    }
     this.refreshMetaBar();
   }
 
@@ -175,8 +199,10 @@ export class HermesView extends ItemView {
       handle: null,
       bodyEl,
       tabButtonEl,
-      tokensUsed: 0
+      tokensUsed: 0,
+      lastPromptTokens: 0
     };
+    this.renderGreeting(tab);
 
     const label = tabButtonEl.createSpan({ cls: "hermes-tab-label", text: tab.title });
     label.onclick = () => this.activateTab(id);
@@ -238,18 +264,27 @@ export class HermesView extends ItemView {
     if (!this.folderChipEl) return;
     const s = this.plugin.settings;
 
-    // Model
-    this.metaModelEl.setText(s.model || "hermes-agent");
+    // Model — the real underlying id (e.g. "gpt-5.5"), resolved from the
+    // gateway; falls back to the configured value, then the meta-label.
+    const modelId = s.model || this.resolvedModel?.id || "";
+    this.metaModelEl.setText(humanizeModel(modelId) || "hermes-agent");
 
     // Reasoning effort
     this.metaThinkingEl.empty();
     this.metaThinkingEl.createSpan({ cls: "hermes-meta-key", text: "Thinking: " });
     this.metaThinkingEl.createSpan({ cls: "hermes-meta-val", text: s.reasoningEffort || "default" });
 
-    // Session tokens (active tab)
-    const tokens = this.activeTab()?.tokensUsed || 0;
-    this.metaTokensEl.setText(tokens > 0 ? this.formatTokens(tokens) : "");
-    this.metaTokensEl.toggleClass("hermes-hidden", tokens <= 0);
+    // Context gauge — latest turn's prompt tokens as a % of the context window.
+    const used = this.activeTab()?.lastPromptTokens || 0;
+    const ctxWindow = this.resolvedModel?.contextWindow || contextWindowFor(modelId);
+    const pct = contextPercent(used, ctxWindow);
+    this.gaugeEl.style.setProperty("--hermes-gauge-pct", String(pct));
+    this.gaugePctEl.setText(`${pct}%`);
+    this.metaTokensEl.toggleClass("hermes-hidden", used <= 0);
+    this.metaTokensEl.setAttr(
+      "aria-label",
+      `Context: ${used.toLocaleString()} / ${ctxWindow.toLocaleString()} tokens (${pct}%)`
+    );
 
     // Working folder
     const base = this.plugin.getVaultBasePath();
@@ -266,9 +301,20 @@ export class HermesView extends ItemView {
     );
   }
 
-  /** "1.2k tokens" / "850 tokens". */
-  private formatTokens(n: number): string {
-    return n >= 1000 ? `${(n / 1000).toFixed(1)}k tokens` : `${n} tokens`;
+  /** Render the empty-state greeting in a tab body (kept stable per tab). */
+  private renderGreeting(tab: Tab): void {
+    if (tab.messages.length > 0) return;
+    if (!tab.greeting) {
+      const opts = greetingOptions(this.plugin.settings.userName || "");
+      tab.greeting = opts[Math.floor(Math.random() * opts.length)];
+    }
+    const wrap = tab.bodyEl.createDiv({ cls: "hermes-greeting" });
+    wrap.createDiv({ cls: "hermes-greeting-text", text: tab.greeting });
+  }
+
+  /** Remove the empty-state greeting once a conversation starts. */
+  private clearGreeting(tab: Tab): void {
+    tab.bodyEl.querySelector(".hermes-greeting")?.remove();
   }
 
   /** Context menu to pick the reasoning effort, updating settings live. */
@@ -416,6 +462,7 @@ export class HermesView extends ItemView {
       return;
     }
 
+    this.clearGreeting(tab);
     this.renderUserMessage(tab, display ?? prompt);
     const assistant = this.createAssistantMessage(tab);
 
@@ -454,6 +501,9 @@ export class HermesView extends ItemView {
             `tokens: ${u.totalTokens} (in ${u.promptTokens} / out ${u.completionTokens})`
           );
           tab.tokensUsed += u.totalTokens;
+          // Context occupancy = the latest turn's prompt tokens (mirrors the
+          // desktop's gauge); the prompt already includes prior history.
+          if (u.promptTokens > 0) tab.lastPromptTokens = u.promptTokens;
           if (tab.id === this.activeTabId) this.refreshMetaBar();
         },
         onError: (msg) => {

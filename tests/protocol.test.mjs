@@ -13,7 +13,11 @@ import {
   runEventReasoningText,
   runCompletedUsage,
   normaliseBaseUrl,
-  chatDeltaContent
+  chatDeltaContent,
+  humanizeModel,
+  contextWindowFor,
+  contextPercent,
+  greetingOptions
 } from "./.build/protocol.mjs";
 
 test("parseSseBlock parses data-only blocks with CRLF", () => {
@@ -107,4 +111,35 @@ test("chatDeltaContent extracts OpenAI delta", () => {
   assert.equal(chatDeltaContent({ choices: [{ delta: { content: "hello" } }] }), "hello");
   assert.equal(chatDeltaContent({ choices: [{ delta: {} }] }), "");
   assert.equal(chatDeltaContent({}), "");
+});
+
+test("humanizeModel strips provider prefix and base-url suffix", () => {
+  assert.equal(humanizeModel("openai-codex/gpt-5.5"), "gpt-5.5");
+  assert.equal(humanizeModel("gpt-5.5@https://chatgpt.com/backend-api/codex"), "gpt-5.5");
+  assert.equal(humanizeModel("gpt-5.5"), "gpt-5.5");
+  assert.equal(humanizeModel("  "), "");
+});
+
+test("contextWindowFor prefers advertised, then known table, then default", () => {
+  assert.equal(contextWindowFor("gpt-5.5", 123456), 123456); // advertised wins
+  assert.equal(contextWindowFor("openai-codex/gpt-5.5"), 272000); // known
+  assert.equal(contextWindowFor("gpt-5.9-future"), 272000); // gpt-5 family default
+  assert.equal(contextWindowFor("some-other-model"), 200000); // generic default
+  assert.equal(contextWindowFor("gpt-5.5", 0), 272000); // 0 advertised ignored
+});
+
+test("contextPercent computes a clamped, rounded percentage", () => {
+  assert.equal(contextPercent(27200, 272000), 10);
+  assert.equal(contextPercent(0, 272000), 0);
+  assert.equal(contextPercent(999999999, 272000), 100); // clamp high
+  assert.equal(contextPercent(100, 0), 0); // no window -> 0
+});
+
+test("greetingOptions personalizes when a name is set", () => {
+  const named = greetingOptions("Jason");
+  assert.ok(named.includes("What's new, Jason?"));
+  assert.ok(named.some((g) => g === "Hi Jason, how can I help?"));
+  const anon = greetingOptions("");
+  assert.ok(anon.includes("What's new?"));
+  assert.ok(anon.includes("How can I help you today?"));
 });

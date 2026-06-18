@@ -25,6 +25,7 @@ import {
   ToolEvent,
   UsageInfo,
   chatDeltaContent,
+  contextWindowFor,
   normaliseBaseUrl,
   parseSseBlock,
   runCompletedUsage,
@@ -147,13 +148,58 @@ export class HermesGatewayClient {
   }
 
   async listModels(): Promise<string[]> {
+    const infos = await this.getModelInfos();
+    return infos.map((m) => m.id);
+  }
+
+  /**
+   * Fetch /v1/models as id + (optional) advertised context window. The gateway
+   * uses the OpenAI shape `{ data: [{ id, context_length? }] }`; some providers
+   * also expose `max_context_length` or `top_provider.context_length`.
+   */
+  async getModelInfos(): Promise<Array<{ id: string; contextWindow?: number }>> {
     const res = await this.jsonRequest("/v1/models", "GET");
     if (res.status !== 200) throw new Error(`/v1/models returned ${res.status}`);
-    const parsed = JSON.parse(res.body) as { data?: Array<{ id?: unknown }> };
-    const ids = (parsed.data || [])
-      .map((m) => (typeof m.id === "string" ? m.id : ""))
-      .filter(Boolean);
-    return ids;
+    const parsed = JSON.parse(res.body) as { data?: Array<Record<string, unknown>> };
+    const toPosInt = (v: unknown): number | undefined => {
+      const n = typeof v === "string" ? parseInt(v, 10) : typeof v === "number" ? v : NaN;
+      return Number.isFinite(n) && n > 0 ? n : undefined;
+    };
+    return (parsed.data || [])
+      .map((m) => {
+        const id = typeof m.id === "string" ? m.id : "";
+        const top = m.top_provider as { context_length?: unknown } | undefined;
+        const contextWindow =
+          toPosInt(m.context_length) ??
+          toPosInt(m.max_context_length) ??
+          toPosInt(top?.context_length);
+        return { id, ...(contextWindow ? { contextWindow } : {}) };
+      })
+      .filter((m) => m.id);
+  }
+
+  /**
+   * Resolve the active model for the footer display: the explicitly-configured
+   * model when set, otherwise the gateway's first advertised model (the real
+   * underlying id, e.g. "gpt-5.5", rather than the "hermes-agent" meta-label).
+   * Returns null when the gateway can't be reached and no model is configured.
+   */
+  async resolveActiveModel(): Promise<{ id: string; contextWindow: number } | null> {
+    const configured = (this.getSettings().model || "").trim();
+    let infos: Array<{ id: string; contextWindow?: number }> = [];
+    try {
+      infos = await this.getModelInfos();
+    } catch {
+      infos = [];
+    }
+    let chosen: { id: string; contextWindow?: number } | undefined;
+    if (configured) {
+      chosen = infos.find((m) => m.id === configured) || { id: configured };
+    } else {
+      chosen = infos[0];
+    }
+    if (!chosen) return null;
+    return { id: chosen.id, contextWindow: contextWindowFor(chosen.id, chosen.contextWindow) };
   }
 
   /** Probe the gateway and report a user-readable connection status. */

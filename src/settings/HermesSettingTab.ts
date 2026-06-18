@@ -20,6 +20,19 @@ export class HermesSettingTab extends PluginSettingTab {
     });
 
     new Setting(containerEl)
+      .setName("Your name")
+      .setDesc("Optional. Personalizes the greeting shown in an empty chat (e.g. \"What's new, Jason?\").")
+      .addText((text) =>
+        text
+          .setPlaceholder("(none)")
+          .setValue(this.plugin.settings.userName)
+          .onChange(async (v) => {
+            this.plugin.settings.userName = v.trim();
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
       .setName("Gateway base URL")
       .setDesc("Default profile uses http://127.0.0.1:8642. A trailing /v1 is stripped automatically.")
       .addText((text) =>
@@ -29,6 +42,7 @@ export class HermesSettingTab extends PluginSettingTab {
           .onChange(async (v) => {
             this.plugin.settings.baseUrl = v;
             await this.plugin.saveSettings();
+            this.plugin.reloadModelInViews();
           })
       );
 
@@ -42,6 +56,7 @@ export class HermesSettingTab extends PluginSettingTab {
           .onChange(async (v) => {
             this.plugin.settings.apiKey = v.trim();
             await this.plugin.saveSettings();
+            this.plugin.reloadModelInViews();
           });
         text.inputEl.type = "password";
         return text;
@@ -57,6 +72,7 @@ export class HermesSettingTab extends PluginSettingTab {
           .onChange(async (v) => {
             this.plugin.settings.model = v.trim();
             await this.plugin.saveSettings();
+            this.plugin.reloadModelInViews();
           })
       );
 
