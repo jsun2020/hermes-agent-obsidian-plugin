@@ -110,6 +110,14 @@ notes.
 > network_access = true
 > ```
 >
+> **Windows caveat (`CreateProcessWithLogonW failed: 1385`).** On locked-down / corporate Windows the
+> Codex sandbox itself can't start — `1385 = ERROR_LOGON_TYPE_NOT_GRANTED`, i.e. your account lacks the
+> "Log on as a batch job" right that `[windows] sandbox = "elevated"` needs. Both `read-only` **and**
+> `workspace-write` depend on that sandbox, so they fail before startup. The only mode that works there
+> is **`sandbox_mode = "danger-full-access"`** (no sandbox → no `CreateProcessWithLogonW`). Either grant
+> the logon right via an elevated `secedit`/`ntrights` (may be blocked/reverted by Group Policy), or use
+> full-access.
+>
 > With this, the agent can read anywhere, run commands, and write into the vault — no per-command
 > prompts. For unrestricted access (read/write anywhere + network, like
 > `--dangerously-bypass-approvals-and-sandbox`) use `sandbox_mode = "danger-full-access"` instead and
