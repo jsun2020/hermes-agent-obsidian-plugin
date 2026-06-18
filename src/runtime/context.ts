@@ -92,12 +92,12 @@ export function contextFolderInstructions(folder: string): string {
   if (!f) return "";
   return (
     `The working folder for this conversation is ${f}. ` +
-    `This folder is an Obsidian vault. When the user asks you to read, create, ` +
+    `This folder is an Obsidian vault and is your current working directory: when ` +
+    `the user refers to "the current directory", "this folder", or "my notes", they ` +
+    `mean ${f} — not your process's own directory. When asked to read, create, ` +
     `modify, search, or summarise notes, prefer the file read/write/search tools ` +
     `with absolute paths under this folder over shell commands. ` +
-    `Important: in some Hermes gateway setups you run in a restricted sandbox ` +
-    `rooted at a different directory, so reads/writes under this folder (and shell ` +
-    `commands) can be denied. If a file or directory operation is blocked, do NOT ` +
+    `If a file or directory operation is blocked by a restricted sandbox, do NOT ` +
     `retry it repeatedly — state plainly that you don't have filesystem access to ` +
     `the vault in this environment, and offer to work from note content the user ` +
     `pastes or attaches with the "current note" / "selection" toggles instead.`

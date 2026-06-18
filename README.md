@@ -92,20 +92,39 @@ notes.
 > and those escalations are auto-denied because the run is non-interactive. That is the
 > "two read-only permission requests were rejected" message.
 >
-> This is **not fixable from the plugin.** To give the agent real vault access you must act on the
-> gateway side:
-> - **Read access:** launch the Hermes gateway with its working directory set to your vault, so the
->   Codex sandbox is rooted there. (A Hermes Desktop / launch concern.)
-> - **Write access:** configure a write-capable Codex permission profile (a `[permissions]` table in
->   your Codex `config.toml`); Codex defaults to `:read-only` and the gateway intentionally does not
->   override it per run.
-> - **Proper upstream fix:** have the gateway's `/v1/runs` handler accept a `cwd` field and thread it
->   into the run (`set_session_vars(..., cwd=...)` / `agent.session_cwd`). This plugin already **sends
->   `cwd`** (your working folder) on every run, so it will work automatically once the gateway honors it.
+> This is **not fixable from the plugin** (a pure API client) — but you *can* fix it on the Codex side,
+> since the gateway drives Codex via `~/.codex/config.toml` (`CODEX_HOME`). Codex defaults to
+> `sandbox_mode = read-only`, which blocks the shell/command escalations the agent uses.
 >
-> **Working alternative today (no gateway changes):** use the **current note** / **selection** toggles
-> (with *Include full note content* on) or paste the notes into the message. The agent then works from
-> the attached content directly — which is exactly what it offers to do when a read is blocked.
+> **The fix (verified):** add these keys to `~/.codex/config.toml`, then **restart Hermes Desktop**
+> (the gateway loads the config at startup). This is the config equivalent of SuperAI Agent's
+> `codex exec -a never -s workspace-write`:
+>
+> ```toml
+> approval_policy = "never"
+> sandbox_mode = "workspace-write"
+>
+> [sandbox_workspace_write]
+> # writes allowed only under these roots (reads are allowed anywhere); add your vault:
+> writable_roots = ['C:\Users\you\Obsidian-vault']
+> network_access = true
+> ```
+>
+> With this, the agent can read anywhere, run commands, and write into the vault — no per-command
+> prompts. For unrestricted access (read/write anywhere + network, like
+> `--dangerously-bypass-approvals-and-sandbox`) use `sandbox_mode = "danger-full-access"` instead and
+> drop the `[sandbox_workspace_write]` table. To revert, remove the added keys.
+>
+> The agent's process cwd is still the gateway's directory, not the vault, so it must use **absolute
+> paths** under your vault — the plugin's working-folder `instructions` already tell it to, and to treat
+> that folder as "the current directory".
+>
+> **Upstream nicety:** if the gateway's `/v1/runs` ever accepts a per-run `cwd`, the agent's sandbox
+> could be rooted at the vault automatically — this plugin already **sends `cwd`** on every run, so it
+> would work the moment the gateway honors it.
+>
+> **No-config alternative:** use the **current note** / **selection** toggles (with *Include full note
+> content* on) or paste the notes into the message — the agent then works from the attached content.
 
 Click **Test connection** to verify reachability, the chosen transport, and the model list.
 
