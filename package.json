@@ -1,6 +1,6 @@
 {
   "name": "hermes-agent",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "Obsidian plugin: chat with a locally installed Hermes Agent via its gateway HTTP API.",
   "main": "main.js",
   "scripts": {
