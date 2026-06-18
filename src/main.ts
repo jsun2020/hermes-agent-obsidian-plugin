@@ -1,4 +1,4 @@
-import { Editor, FileSystemAdapter, MarkdownView, Notice, Plugin, WorkspaceLeaf } from "obsidian";
+import { Editor, FileSystemAdapter, MarkdownView, Notice, Plugin, WorkspaceLeaf, normalizePath } from "obsidian";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -8,13 +8,24 @@ import { HermesView, VIEW_TYPE_HERMES } from "./view/HermesView";
 import { HermesGatewayClient } from "./runtime/gatewayClient";
 import { buildPrompt } from "./runtime/context";
 import { parseConfigModel, parseContextLengthCache } from "./runtime/protocol";
+import {
+  Conversation,
+  parseHistoryFile,
+  removeConversation,
+  serializeHistoryFile,
+  upsertConversation
+} from "./runtime/history";
 
 export default class HermesPlugin extends Plugin {
   settings!: HermesSettings;
   client!: HermesGatewayClient;
 
+  /** Locally persisted chat history (newest first), loaded from history.json. */
+  conversations: Conversation[] = [];
+
   async onload(): Promise<void> {
     await this.loadSettings();
+    await this.loadHistory();
     this.client = new HermesGatewayClient(
       () => this.settings,
       () => this.getVaultBasePath()
@@ -76,6 +87,48 @@ export default class HermesPlugin extends Plugin {
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
+  }
+
+  // ---- chat history persistence ----
+  //
+  // Stored in a separate `history.json` in the plugin folder (NOT data.json, so
+  // the API key / settings stay isolated). Survives view reloads and restarts.
+
+  private historyPath(): string {
+    return normalizePath(`${this.manifest.dir}/history.json`);
+  }
+
+  /** Load persisted conversations from disk (best effort; never throws). */
+  async loadHistory(): Promise<void> {
+    try {
+      const p = this.historyPath();
+      const adapter = this.app.vault.adapter;
+      if (await adapter.exists(p)) {
+        this.conversations = parseHistoryFile(await adapter.read(p));
+      }
+    } catch {
+      this.conversations = [];
+    }
+  }
+
+  private async persistHistory(): Promise<void> {
+    try {
+      await this.app.vault.adapter.write(this.historyPath(), serializeHistoryFile(this.conversations));
+    } catch {
+      /* best effort — a failed history write must never break a chat turn */
+    }
+  }
+
+  /** Insert or update a conversation, then persist. */
+  async saveConversation(entry: Conversation): Promise<void> {
+    this.conversations = upsertConversation(this.conversations, entry);
+    await this.persistHistory();
+  }
+
+  /** Delete a conversation by id, then persist. */
+  async deleteConversation(id: string): Promise<void> {
+    this.conversations = removeConversation(this.conversations, id);
+    await this.persistHistory();
   }
 
   /** Get the active markdown editor view, if any. */

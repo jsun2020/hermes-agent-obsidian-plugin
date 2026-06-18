@@ -1,12 +1,12 @@
 {
   "name": "hermes-agent",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Obsidian plugin: chat with a locally installed Hermes Agent via its gateway HTTP API.",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "node esbuild.config.mjs production",
-    "build:test": "esbuild src/runtime/protocol.ts --bundle --format=esm --platform=node --outfile=tests/.build/protocol.mjs && esbuild src/runtime/context.ts --bundle --format=esm --platform=node --outfile=tests/.build/context.mjs",
+    "build:test": "esbuild src/runtime/protocol.ts --bundle --format=esm --platform=node --outfile=tests/.build/protocol.mjs && esbuild src/runtime/context.ts --bundle --format=esm --platform=node --outfile=tests/.build/context.mjs && esbuild src/runtime/history.ts --bundle --format=esm --platform=node --outfile=tests/.build/history.mjs",
     "test": "npm run build:test && node --test",
     "typecheck": "tsc --noEmit"
   },

@@ -3,11 +3,12 @@
 // Pure Obsidian DOM API (no React), mirroring Claudian's approach. Each tab
 // owns its own conversation state, messages container, and in-flight handle.
 
-import { ItemView, WorkspaceLeaf, MarkdownRenderer, Menu, setIcon, Notice } from "obsidian";
+import { App, ItemView, WorkspaceLeaf, MarkdownRenderer, Menu, Modal, setIcon, Notice } from "obsidian";
 import type HermesPlugin from "../main";
 import { ChatHandle, ChatMessage, HermesGatewayClient, ToolEvent, UsageInfo } from "../runtime/gatewayClient";
 import { resolveWorkingFolder } from "../runtime/context";
 import { contextPercent, contextWindowFor, greetingOptions, humanizeModel } from "../runtime/protocol";
+import { Conversation, deriveTitle, relativeTime, tabLabel } from "../runtime/history";
 
 export const VIEW_TYPE_HERMES = "hermes-chat";
 
@@ -33,6 +34,7 @@ interface Tab {
   tokensUsed: number; // cumulative session tokens for this tab
   lastPromptTokens: number; // latest turn's prompt tokens = current context occupancy
   greeting?: string; // chosen empty-state greeting (kept stable per tab)
+  historyId: string; // stable id for upserting this tab into the history store
 }
 
 export class HermesView extends ItemView {
@@ -87,6 +89,12 @@ export class HermesView extends ItemView {
     const header = root.createDiv({ cls: "hermes-header" });
     header.createSpan({ cls: "hermes-title", text: "Hermes Agent" });
     const headerActions = header.createDiv({ cls: "hermes-header-actions" });
+    const historyBtn = headerActions.createEl("button", {
+      cls: "hermes-icon-btn",
+      attr: { "aria-label": "Chat history" }
+    });
+    setIcon(historyBtn, "history");
+    historyBtn.onclick = () => this.openHistory();
     const newTabBtn = headerActions.createEl("button", { cls: "hermes-icon-btn", attr: { "aria-label": "New tab" } });
     setIcon(newTabBtn, "plus");
     newTabBtn.onclick = () => this.newTab();
@@ -231,7 +239,8 @@ export class HermesView extends ItemView {
       bodyEl,
       tabButtonEl,
       tokensUsed: 0,
-      lastPromptTokens: 0
+      lastPromptTokens: 0,
+      historyId: id
     };
     this.renderGreeting(tab);
 
@@ -544,12 +553,14 @@ export class HermesView extends ItemView {
           tab.messages.push({ role: "assistant", content: `[error] ${msg}` });
           this.refreshRunningState();
           this.scrollToBottom(tab);
+          this.saveTabHistory(tab);
         },
         onDone: (sessionId) => {
           if (sessionId) tab.sessionId = sessionId;
           tab.messages.push({ role: "assistant", content: buffer });
           tab.handle = null;
           this.refreshRunningState();
+          this.saveTabHistory(tab);
         }
       },
       tab.sessionId
@@ -612,5 +623,144 @@ export class HermesView extends ItemView {
 
   private scrollToBottom(tab: Tab): void {
     tab.bodyEl.scrollTop = tab.bodyEl.scrollHeight;
+  }
+
+  // ---- chat history ----
+
+  /** Open the saved-conversations browser. */
+  private openHistory(): void {
+    new HistoryModal(this.app, this).open();
+  }
+
+  /** Snapshot of saved conversations (newest first) for the history modal. */
+  getConversations(): Conversation[] {
+    return this.plugin.conversations.slice();
+  }
+
+  /** Persist the active tab's conversation after a completed (or failed) turn. */
+  private saveTabHistory(tab: Tab): void {
+    if (!tab.messages.length) return;
+    const entry: Conversation = {
+      id: tab.historyId,
+      title: deriveTitle(tab.messages),
+      sessionId: tab.sessionId,
+      updatedAt: Date.now(),
+      messages: tab.messages.map((m) => ({ role: m.role, content: m.content }))
+    };
+    void this.plugin.saveConversation(entry);
+  }
+
+  /** Delete a saved conversation (called from the modal). */
+  async deleteConversation(id: string): Promise<void> {
+    await this.plugin.deleteConversation(id);
+  }
+
+  /**
+   * Restore a saved conversation into a tab: reuse the active tab when it is
+   * empty, otherwise open a fresh one. Messages and the gateway sessionId are
+   * restored so the conversation continues with server-side context.
+   */
+  restoreConversation(id: string): void {
+    const conv = this.plugin.conversations.find((c) => c.id === id);
+    if (!conv) return;
+
+    let tab = this.activeTab();
+    if (!tab || tab.messages.length > 0) {
+      const before = this.tabs.length;
+      this.newTab();
+      if (this.tabs.length === before) {
+        new Notice("Hermes: close a tab first (tab limit reached).");
+        return;
+      }
+      tab = this.activeTab();
+    }
+    if (!tab) return;
+
+    tab.bodyEl.empty();
+    tab.messages = conv.messages.map((m) => ({ role: m.role, content: m.content }));
+    tab.sessionId = conv.sessionId;
+    tab.historyId = conv.id;
+    tab.lastPromptTokens = 0;
+    tab.title = tabLabel(conv.title);
+    const labelEl = tab.tabButtonEl.querySelector(".hermes-tab-label");
+    if (labelEl) labelEl.setText(tab.title);
+
+    this.renderRestoredMessages(tab);
+    this.activateTab(tab.id);
+    this.refreshMetaBar();
+  }
+
+  /** Re-render a restored conversation's messages into its tab body. */
+  private renderRestoredMessages(tab: Tab): void {
+    for (const m of tab.messages) {
+      if (m.role === "user") {
+        this.renderUserMessage(tab, m.content);
+      } else if (m.role === "assistant") {
+        const assistant = this.createAssistantMessage(tab);
+        const content = m.content || "";
+        if (content.startsWith("[error] ")) {
+          assistant.contentEl.createDiv({ cls: "hermes-error", text: content.slice("[error] ".length) });
+        } else {
+          void MarkdownRenderer.render(this.app, content, assistant.contentEl, "", this);
+        }
+      }
+      // system messages are context-only and not shown in the UI
+    }
+    this.scrollToBottom(tab);
+  }
+}
+
+/** Modal listing saved conversations, with open + delete per row. */
+class HistoryModal extends Modal {
+  constructor(app: App, private view: HermesView) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("hermes-history-modal");
+    contentEl.createEl("h3", { text: "Chat history" });
+
+    const list = this.view.getConversations();
+    const listEl = contentEl.createDiv({ cls: "hermes-history-list" });
+    const emptyEl = contentEl.createDiv({
+      cls: "hermes-history-empty",
+      text: "No saved conversations yet."
+    });
+
+    const render = (): void => {
+      listEl.empty();
+      const items = this.view.getConversations();
+      emptyEl.toggleClass("hermes-hidden", items.length > 0);
+      const now = Date.now();
+      for (const conv of items) {
+        const row = listEl.createDiv({ cls: "hermes-history-row" });
+        const main = row.createDiv({ cls: "hermes-history-main" });
+        main.createDiv({ cls: "hermes-history-title", text: conv.title });
+        main.createDiv({
+          cls: "hermes-history-meta",
+          text: `${relativeTime(now, conv.updatedAt)} - ${conv.messages.length} messages`
+        });
+        main.onclick = () => {
+          this.view.restoreConversation(conv.id);
+          this.close();
+        };
+        const del = row.createSpan({ cls: "hermes-history-del", attr: { "aria-label": "Delete" } });
+        setIcon(del, "trash");
+        del.onclick = async (e) => {
+          e.stopPropagation();
+          await this.view.deleteConversation(conv.id);
+          render();
+        };
+      }
+    };
+
+    void list; // initial state computed inside render()
+    render();
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
   }
 }

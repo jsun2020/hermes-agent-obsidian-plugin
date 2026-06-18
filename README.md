@@ -149,6 +149,19 @@ Click **Test connection** to verify reachability, the chosen transport, and the 
 - The **+** button adds a tab; each tab is an independent conversation. The **stop** (square)
   button cancels the in-flight reply.
 
+### Chat history
+
+The plugin remembers your past conversations across reloads and restarts. Click the **history**
+(clock) icon in the panel header to open a list of saved chats — each shows a title (from the first
+message), how long ago it was, and its message count. Click a row to **reopen** it in a tab; the
+conversation is fully restored, including the gateway **session id**, so you can keep going with the
+agent's server-side context intact. The trash icon on a row deletes that conversation.
+
+History is saved automatically after each reply (and after errors) to a separate `history.json` in
+the plugin folder (`.obsidian/plugins/hermes-agent/history.json`) — **not** in `data.json`, so your
+API key and settings stay isolated. The newest 100 conversations are kept. This is the plugin's own
+record; it is independent of the gateway's `state.db` session store.
+
 ### Greeting
 
 An empty chat shows a greeting. Set **Your name** in settings to personalize it (e.g. "What's new,
