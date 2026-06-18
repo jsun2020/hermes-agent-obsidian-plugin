@@ -48,3 +48,10 @@ test("contextFolderInstructions embeds the folder and is empty when blank", () =
   assert.ok(/working folder/i.test(msg));
   assert.ok(/file/i.test(msg));
 });
+
+test("contextFolderInstructions tells the agent to degrade gracefully if sandboxed", () => {
+  const msg = contextFolderInstructions("/home/me/Vault");
+  assert.ok(/sandbox/i.test(msg));
+  assert.ok(/don't have filesystem access|filesystem access/i.test(msg));
+  assert.ok(/paste|attach/i.test(msg));
+});

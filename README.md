@@ -82,10 +82,30 @@ notes.
   working folder.** Turn it off to get plain, tool-less replies (every tool request is then
   cancelled and the run falls back to a normal chat completion).
 
-> **Windows note:** the gateway's shell/code-execution sandbox may be unavailable on Windows
-> (PowerShell can fail to start). File read/write/search tools do **not** need the shell and work
-> regardless, so note-centric tasks (read, summarise, edit, create) still work. Pure shell/bash
-> workflows are limited by the gateway environment, not the plugin.
+> **Filesystem access & the Codex sandbox (important).** Whether the agent can actually read/write
+> your vault depends on the **gateway**, not this plugin. With the `gpt-5.5` / OpenAI-Codex provider,
+> the agent runs inside a Codex *sandbox* whose workspace root is the **gateway process's launch
+> directory** (`os.getcwd()`), and which defaults to **read-only**. The gateway's `/v1/runs` endpoint
+> exposes **no way for an API client to set a per-run working directory** (no body field, header, env,
+> or config key — `agent.session_cwd` is never set on the API path). So if your vault is not the
+> gateway's launch directory, file reads of vault paths fall *outside* the sandbox and are escalated —
+> and those escalations are auto-denied because the run is non-interactive. That is the
+> "two read-only permission requests were rejected" message.
+>
+> This is **not fixable from the plugin.** To give the agent real vault access you must act on the
+> gateway side:
+> - **Read access:** launch the Hermes gateway with its working directory set to your vault, so the
+>   Codex sandbox is rooted there. (A Hermes Desktop / launch concern.)
+> - **Write access:** configure a write-capable Codex permission profile (a `[permissions]` table in
+>   your Codex `config.toml`); Codex defaults to `:read-only` and the gateway intentionally does not
+>   override it per run.
+> - **Proper upstream fix:** have the gateway's `/v1/runs` handler accept a `cwd` field and thread it
+>   into the run (`set_session_vars(..., cwd=...)` / `agent.session_cwd`). This plugin already **sends
+>   `cwd`** (your working folder) on every run, so it will work automatically once the gateway honors it.
+>
+> **Working alternative today (no gateway changes):** use the **current note** / **selection** toggles
+> (with *Include full note content* on) or paste the notes into the message. The agent then works from
+> the attached content directly — which is exactly what it offers to do when a read is blocked.
 
 Click **Test connection** to verify reachability, the chosen transport, and the model list.
 

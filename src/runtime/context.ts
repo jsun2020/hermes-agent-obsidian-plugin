@@ -80,9 +80,12 @@ export function resolveWorkingFolder(vaultBase: string, configured: string): str
 
 /**
  * Build the `instructions` system message that scopes the agent to a folder.
- * Mirrors Hermes Desktop's contextFolderSystemMessage(), with an added nudge to
- * prefer file tools because shell/PowerShell execution is unavailable on some
- * Windows gateway builds. Returns "" when no folder is known.
+ * Mirrors Hermes Desktop's contextFolderSystemMessage(). Because the gateway's
+ * Codex sandbox is rooted at the gateway's own launch directory (not the vault)
+ * and defaults to read-only, file/dir access under this folder may be denied in
+ * some setups — so we tell the agent to fail fast and offer the working
+ * alternative instead of looping on rejected permission requests. Returns ""
+ * when no folder is known.
  */
 export function contextFolderInstructions(folder: string): string {
   const f = (folder || "").trim();
@@ -90,8 +93,13 @@ export function contextFolderInstructions(folder: string): string {
   return (
     `The working folder for this conversation is ${f}. ` +
     `This folder is an Obsidian vault. When the user asks you to read, create, ` +
-    `modify, search, or summarise notes or files, use the file read/write/search ` +
-    `tools with absolute paths under this folder. Prefer the file tools over shell ` +
-    `commands; shell/PowerShell execution may be unavailable on this system.`
+    `modify, search, or summarise notes, prefer the file read/write/search tools ` +
+    `with absolute paths under this folder over shell commands. ` +
+    `Important: in some Hermes gateway setups you run in a restricted sandbox ` +
+    `rooted at a different directory, so reads/writes under this folder (and shell ` +
+    `commands) can be denied. If a file or directory operation is blocked, do NOT ` +
+    `retry it repeatedly — state plainly that you don't have filesystem access to ` +
+    `the vault in this environment, and offer to work from note content the user ` +
+    `pastes or attaches with the "current note" / "selection" toggles instead.`
   );
 }

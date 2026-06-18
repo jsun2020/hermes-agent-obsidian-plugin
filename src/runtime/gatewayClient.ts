@@ -82,14 +82,19 @@ export class HermesGatewayClient {
     return normaliseBaseUrl(this.getSettings().baseUrl);
   }
 
+  /** Absolute path of the agent's working folder (vault root or configured sub-folder). */
+  private workingFolderPath(): string {
+    return resolveWorkingFolder(this.getVaultBasePath() || "", this.getSettings().workingFolder || "");
+  }
+
   /**
    * The `instructions` system message that scopes the agent to its working
    * folder (the vault root, or a configured sub-folder/absolute path). Hermes
-   * has no `cwd` field, so this is how the vault becomes the working directory.
+   * has no documented `cwd` field on /v1/runs, so this is the primary way the
+   * vault is communicated as the working directory.
    */
   private workingFolderInstructions(): string {
-    const folder = resolveWorkingFolder(this.getVaultBasePath() || "", this.getSettings().workingFolder || "");
-    return contextFolderInstructions(folder);
+    return contextFolderInstructions(this.workingFolderPath());
   }
 
   private authHeaders(): Record<string, string> {
@@ -435,8 +440,15 @@ export class HermesGatewayClient {
       input,
       conversation_history: history.map((m) => ({ role: m.role, content: m.content }))
     };
-    const instructions = this.workingFolderInstructions();
+    const folder = this.workingFolderPath();
+    const instructions = contextFolderInstructions(folder);
     if (instructions) bodyObj.instructions = instructions;
+    // Forward-compat: the current gateway ignores extra body keys, but the
+    // upstream fix for true vault access is for /v1/runs to honor a per-run
+    // `cwd` (the agent's Codex sandbox is otherwise rooted at the gateway's
+    // launch directory, not the vault). Sending it now means this plugin will
+    // "just work" the moment the gateway adds that field. Harmless until then.
+    if (folder) bodyObj.cwd = folder;
     if (s.reasoningEffort) bodyObj.reasoning_effort = s.reasoningEffort;
     if (sessionId) bodyObj.session_id = sessionId;
 
