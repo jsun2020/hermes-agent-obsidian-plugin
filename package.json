@@ -1,6 +1,6 @@
 {
   "name": "hermes-agent",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Obsidian plugin: chat with a locally installed Hermes Agent via its gateway HTTP API.",
   "main": "main.js",
   "scripts": {
@@ -8,7 +8,8 @@
     "build": "node esbuild.config.mjs production",
     "build:test": "esbuild src/runtime/protocol.ts --bundle --format=esm --platform=node --outfile=tests/.build/protocol.mjs && esbuild src/runtime/context.ts --bundle --format=esm --platform=node --outfile=tests/.build/context.mjs && esbuild src/runtime/history.ts --bundle --format=esm --platform=node --outfile=tests/.build/history.mjs",
     "test": "npm run build:test && node --test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint \"src/**/*.ts\""
   },
   "keywords": [
     "obsidian",
@@ -20,7 +21,10 @@
   "devDependencies": {
     "@types/node": "^20.11.0",
     "esbuild": "^0.21.5",
+    "eslint": "^9.39.4",
+    "eslint-plugin-obsidianmd": "^0.3.0",
     "obsidian": "latest",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^8.61.1"
   }
 }

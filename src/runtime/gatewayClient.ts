@@ -123,7 +123,7 @@ export class HermesGatewayClient {
     return new Promise<RawResponse>((resolve, reject) => {
       const req = this.requester(url).request(url, { method, headers, timeout: timeoutMs }, (res) => {
         let raw = "";
-        res.on("data", (c) => (raw += c.toString()));
+        res.on("data", (c: Buffer) => (raw += c.toString()));
         res.on("end", () =>
           resolve({ status: res.statusCode || 0, body: raw, headers: res.headers })
         );
@@ -284,11 +284,16 @@ export class HermesGatewayClient {
       }
     };
 
-    (async () => {
+    void (async () => {
       let useRuns = false;
       if (s.transport === "runs") useRuns = true;
       else if (s.transport === "auto") {
-        const caps = await this.getCapabilities().catch(() => null);
+        let caps: HermesCapabilities | null = null;
+        try {
+          caps = await this.getCapabilities();
+        } catch {
+          caps = null;
+        }
         useRuns = supportsRunsTransport(caps);
       }
       if (aborted) return;
@@ -351,7 +356,7 @@ export class HermesGatewayClient {
           hasContent = true;
           cb.onChunk(delta);
         }
-        if (json.error?.message) lastError = String(json.error.message);
+        if (typeof json.error?.message === "string") lastError = json.error.message;
       } catch {
         /* skip malformed block */
       }
@@ -367,11 +372,12 @@ export class HermesGatewayClient {
 
         if (res.statusCode !== 200) {
           let errBody = "";
-          res.on("data", (d) => (errBody += d.toString()));
+          res.on("data", (d: Buffer) => (errBody += d.toString()));
           res.on("end", () => {
             try {
-              const err = JSON.parse(errBody);
-              finish(err.error?.message || `API error ${res.statusCode}`);
+              const err = JSON.parse(errBody) as { error?: { message?: unknown } };
+              const m = err.error?.message;
+              finish(typeof m === "string" ? m : `API error ${res.statusCode}`);
             } catch {
               finish(`Gateway returned ${res.statusCode}: ${errBody.slice(0, 200)}`);
             }
@@ -596,7 +602,7 @@ export class HermesGatewayClient {
       { method: "POST", headers, timeout: 30000 },
       (res) => {
         let raw = "";
-        res.on("data", (c) => (raw += c.toString()));
+        res.on("data", (c: Buffer) => (raw += c.toString()));
         res.on("end", () => {
           if (res.statusCode !== 200 && res.statusCode !== 202) {
             fallback();

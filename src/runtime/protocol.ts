@@ -18,7 +18,7 @@ export interface ToolEvent {
 
 export interface HermesCapabilities {
   features?: Record<string, unknown>;
-  endpoints?: Record<string, { path?: unknown } | unknown>;
+  endpoints?: Record<string, { path?: unknown }>;
 }
 
 export function normaliseBaseUrl(raw: string): string {
@@ -35,7 +35,7 @@ function boolFeature(caps: HermesCapabilities | null | undefined, name: string):
 function endpointPath(caps: HermesCapabilities | null | undefined, name: string): string {
   const endpoint = caps?.endpoints?.[name];
   if (!endpoint || typeof endpoint !== "object") return "";
-  const path = (endpoint as { path?: unknown }).path;
+  const path = endpoint.path;
   return typeof path === "string" ? path : "";
 }
 

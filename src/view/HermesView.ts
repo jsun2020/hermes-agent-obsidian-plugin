@@ -392,8 +392,10 @@ export class HermesView extends ItemView {
   private async pickWorkingFolder(): Promise<void> {
     let remote: ElectronRemote | undefined;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      remote = (require("electron") as { remote?: ElectronRemote }).remote;
+      // Obsidian runs in Electron; the dialog API is only reachable through the
+      // renderer's `window.require` (there is no native Obsidian folder picker).
+      const electron = (window as { require?: (mod: string) => unknown }).require?.("electron");
+      remote = (electron as { remote?: ElectronRemote } | undefined)?.remote;
     } catch {
       remote = undefined;
     }
@@ -528,7 +530,7 @@ export class HermesView extends ItemView {
         },
         onReasoning: (t) => {
           reasoning += t;
-          assistant.reasoningEl.style.display = "block";
+          assistant.reasoningEl.classList.add("is-visible");
           assistant.reasoningBodyEl.setText(reasoning);
           this.scrollToBottom(tab);
         },
@@ -598,7 +600,6 @@ export class HermesView extends ItemView {
     msg.createDiv({ cls: "hermes-msg-role", text: "Hermes" });
 
     const reasoningEl = msg.createDiv({ cls: "hermes-reasoning" });
-    reasoningEl.style.display = "none";
     reasoningEl.createDiv({ cls: "hermes-reasoning-title", text: "thinking" });
     const reasoningBodyEl = reasoningEl.createDiv({ cls: "hermes-reasoning-body" });
 

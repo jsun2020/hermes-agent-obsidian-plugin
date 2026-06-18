@@ -74,37 +74,51 @@ export function relativeTime(nowMs: number, thenMs: number): string {
   return `${Math.floor(d / 365)}y ago`;
 }
 
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
+const VALID_ROLES = new Set(["user", "assistant", "system"]);
+
 /** Parse the on-disk history file defensively (never throws). */
 export function parseHistoryFile(text: string): Conversation[] {
+  let data: unknown;
   try {
-    const data = JSON.parse(text);
-    const arr = Array.isArray(data) ? data : data?.conversations;
-    if (!Array.isArray(arr)) return [];
-    return arr
-      .filter((c: unknown): c is Record<string, unknown> => {
-        return !!c && typeof (c as { id?: unknown }).id === "string" &&
-          Array.isArray((c as { messages?: unknown }).messages);
-      })
-      .map((c) => {
-        const messages = (c.messages as unknown[])
-          .filter(
-            (m): m is StoredMessage =>
-              !!m &&
-              typeof (m as { content?: unknown }).content === "string" &&
-              typeof (m as { role?: unknown }).role === "string"
-          )
-          .map((m) => ({ role: m.role, content: m.content }));
-        return {
-          id: c.id as string,
-          title: typeof c.title === "string" ? (c.title as string) : deriveTitle(messages),
-          sessionId: typeof c.sessionId === "string" ? (c.sessionId as string) : undefined,
-          updatedAt: typeof c.updatedAt === "number" ? (c.updatedAt as number) : 0,
-          messages
-        };
-      });
+    data = JSON.parse(text);
   } catch {
     return [];
   }
+
+  let rawArr: unknown[] = [];
+  if (Array.isArray(data)) {
+    rawArr = data as unknown[];
+  } else if (isRecord(data) && Array.isArray(data.conversations)) {
+    rawArr = data.conversations as unknown[];
+  }
+
+  const out: Conversation[] = [];
+  for (const c of rawArr) {
+    if (!isRecord(c) || typeof c.id !== "string" || !Array.isArray(c.messages)) continue;
+    const messages: StoredMessage[] = [];
+    for (const m of c.messages as unknown[]) {
+      if (
+        isRecord(m) &&
+        typeof m.content === "string" &&
+        typeof m.role === "string" &&
+        VALID_ROLES.has(m.role)
+      ) {
+        messages.push({ role: m.role as StoredMessage["role"], content: m.content });
+      }
+    }
+    out.push({
+      id: c.id,
+      title: typeof c.title === "string" ? c.title : deriveTitle(messages),
+      sessionId: typeof c.sessionId === "string" ? c.sessionId : undefined,
+      updatedAt: typeof c.updatedAt === "number" ? c.updatedAt : 0,
+      messages
+    });
+  }
+  return out;
 }
 
 /** Serialize the store for disk (stable, human-readable). */

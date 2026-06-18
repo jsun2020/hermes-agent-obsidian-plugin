@@ -12,12 +12,12 @@ export class HermesSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Hermes Agent" });
-    containerEl.createEl("p", {
-      cls: "setting-item-description",
-      text:
+    new Setting(containerEl)
+      .setName("Connection")
+      .setDesc(
         "Connects to the local Hermes gateway started by Hermes Desktop. Launch Hermes Desktop first; it runs the gateway on 127.0.0.1:8642 by default."
-    });
+      )
+      .setHeading();
 
     new Setting(containerEl)
       .setName("Your name")
@@ -92,12 +92,12 @@ export class HermesSettingTab extends PluginSettingTab {
           })
       );
 
-    containerEl.createEl("h3", { text: "Agent workspace" });
-    containerEl.createEl("p", {
-      cls: "setting-item-description",
-      text:
+    new Setting(containerEl)
+      .setName("Agent workspace")
+      .setDesc(
         "Gives Hermes your vault as its working directory so it can read, write, search, and run multi-step workflows over your notes."
-    });
+      )
+      .setHeading();
 
     new Setting(containerEl)
       .setName("Working folder")

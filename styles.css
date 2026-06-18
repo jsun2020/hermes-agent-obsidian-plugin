@@ -125,11 +125,16 @@
 }
 
 .hermes-reasoning {
+  display: none;
   border-left: 2px solid var(--background-modifier-border);
   padding: 2px 8px;
   margin-bottom: 6px;
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
+}
+
+.hermes-reasoning.is-visible {
+  display: block;
 }
 
 .hermes-reasoning-title {
