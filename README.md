@@ -36,7 +36,22 @@ npm test           # runs protocol unit tests (Node built-in test runner)
 ```
 
 `npm run build` produces `main.js` next to `manifest.json` and `styles.css` — the three files
-Obsidian needs.
+Obsidian needs. `npm run lint` runs the same checks as Obsidian's community review
+(`eslint-plugin-obsidianmd` + typescript-eslint); `npm test` runs the unit tests.
+
+### Releasing (maintainers)
+
+Releases are automated by `.github/workflows/release.yml`. Bump the version in `manifest.json`,
+`package.json`, and `versions.json`, then push a matching tag (Obsidian convention: a bare version,
+no `v` prefix):
+
+```bash
+git tag 0.8.3 && git push origin 0.8.3
+```
+
+The workflow runs `npm ci` + `npm run build`, verifies the tag equals the `manifest.json` version,
+generates GitHub **build-provenance attestations** for `main.js`/`manifest.json`/`styles.css`, and
+creates the GitHub release with those files attached.
 
 ## Install
 
