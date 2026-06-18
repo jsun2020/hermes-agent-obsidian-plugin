@@ -1,7 +1,7 @@
 {
   "id": "hermes-agent",
   "name": "Hermes Agent",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "minAppVersion": "1.5.0",
   "description": "Chat with your locally installed Hermes Agent from inside Obsidian. Sends the current note or selected text to the local Hermes gateway and streams replies in a sidebar.",
   "author": "Jason",

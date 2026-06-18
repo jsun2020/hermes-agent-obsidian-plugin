@@ -167,13 +167,44 @@ export class HermesView extends ItemView {
     void this.loadResolvedModel();
   }
 
-  /** Query the gateway for the active model + context window, then refresh. */
+  /**
+   * Resolve the active model + context window for the footer. Priority:
+   *   1. an explicit Model setting (user override),
+   *   2. the REAL model from the local Hermes config.yaml (e.g. "gpt-5.5"),
+   *   3. the gateway-advertised meta-label (/v1/models — "hermes-agent").
+   * The gateway never exposes the real model, so (2) is what shows "gpt-5.5".
+   */
   async loadResolvedModel(): Promise<void> {
-    try {
-      this.resolvedModel = await this.client.resolveActiveModel();
-    } catch {
-      this.resolvedModel = null;
+    const explicit = (this.plugin.settings.model || "").trim();
+    let id = explicit;
+    let advertised: number | undefined;
+
+    if (!id) {
+      const cfg = this.plugin.readHermesModelConfig();
+      if (cfg) {
+        id = cfg.model;
+        advertised = cfg.contextWindow;
+      }
     }
+    if (!id) {
+      try {
+        const gw = await this.client.resolveActiveModel();
+        if (gw) {
+          id = gw.id;
+          advertised = gw.contextWindow;
+        }
+      } catch {
+        /* gateway unreachable */
+      }
+    } else {
+      // Explicit/config model set: still try the config cache for its window.
+      if (advertised === undefined) {
+        const cfg = this.plugin.readHermesModelConfig();
+        if (cfg && cfg.model === id) advertised = cfg.contextWindow;
+      }
+    }
+
+    this.resolvedModel = id ? { id, contextWindow: contextWindowFor(id, advertised) } : null;
     this.refreshMetaBar();
   }
 

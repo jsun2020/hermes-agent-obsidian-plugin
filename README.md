@@ -112,15 +112,18 @@ send the first message.
 
 Below the input, a Claudian-style meta bar shows, left to right:
 
-- **Model** — the *real* underlying model id (e.g. `gpt-5.5`), resolved from the gateway's
-  `/v1/models` rather than the `hermes-agent` meta-label. If you set an explicit Model in settings,
-  that is shown instead. Click to open settings.
+- **Model** — the *real* underlying model id (e.g. `gpt-5.5`). The gateway API only ever advertises
+  the `hermes-agent` meta-label (or the profile name), so the plugin reads the real model from your
+  local Hermes `config.yaml` (`model.default`). Resolution order: an explicit **Model** setting, then
+  `config.yaml`, then the gateway's advertised label. Point **Hermes home** at the folder containing
+  `config.yaml` if auto-detect (`$HERMES_HOME`, then `~/.hermes`) can't find it — for the portable
+  build that's the `hermes-data/hermes` folder next to the exe. Click to open settings.
 - **Thinking: <effort>** — the reasoning effort. Click to pick one (default/minimal/low/medium/
   high/xhigh) from a menu, applied immediately.
 - **Context gauge** — a donut + percentage showing how full the model's context window is. The
   percentage is the latest turn's prompt tokens divided by the model's context window (e.g. 272k for
-  gpt-5.5; the gateway-advertised size is preferred when available). It appears once a reply reports
-  usage, and grows as the conversation lengthens.
+  gpt-5.5, read from `context_length_cache.yaml` in the Hermes home when available). It appears once a
+  reply reports usage, and grows as the conversation lengthens.
 - **Folder chip** — the agent's working folder. Click to open a **native folder picker**; the chip
   dims when auto-approve is off (read-only).
 

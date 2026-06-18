@@ -39,6 +39,14 @@ export interface HermesSettings {
   autoApproveTools: boolean;
   /** Your name, used to personalize the empty-chat greeting. Optional. */
   userName: string;
+  /**
+   * Path to the Hermes home (the folder containing `config.yaml`), used to read
+   * the REAL underlying model id (e.g. "gpt-5.5") and its context window, which
+   * the gateway API never exposes. Empty -> auto-detect (`$HERMES_HOME`, then
+   * `~/.hermes`). Portable-build users should point this at the portable
+   * `hermes-data/hermes` folder next to the exe.
+   */
+  hermesHome: string;
 }
 
 export const DEFAULT_SETTINGS: HermesSettings = {
@@ -52,5 +60,6 @@ export const DEFAULT_SETTINGS: HermesSettings = {
   maxTabs: 3,
   workingFolder: "",
   autoApproveTools: true,
-  userName: ""
+  userName: "",
+  hermesHome: ""
 };

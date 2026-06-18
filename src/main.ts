@@ -1,9 +1,13 @@
 import { Editor, FileSystemAdapter, MarkdownView, Notice, Plugin, WorkspaceLeaf } from "obsidian";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 import { DEFAULT_SETTINGS, HermesSettings } from "./settings/types";
 import { HermesSettingTab } from "./settings/HermesSettingTab";
 import { HermesView, VIEW_TYPE_HERMES } from "./view/HermesView";
 import { HermesGatewayClient } from "./runtime/gatewayClient";
 import { buildPrompt } from "./runtime/context";
+import { parseConfigModel, parseContextLengthCache } from "./runtime/protocol";
 
 export default class HermesPlugin extends Plugin {
   settings!: HermesSettings;
@@ -87,6 +91,54 @@ export default class HermesPlugin extends Plugin {
   getVaultBasePath(): string {
     const adapter = this.app.vault.adapter;
     return adapter instanceof FileSystemAdapter ? adapter.getBasePath() : "";
+  }
+
+  /**
+   * Candidate Hermes home directories (folders that hold `config.yaml`), in
+   * priority order: the configured override, then `$HERMES_HOME`, then
+   * `~/.hermes`. The gateway runs on this same machine, so these are readable.
+   */
+  private hermesHomeCandidates(): string[] {
+    const out: string[] = [];
+    const configured = (this.settings.hermesHome || "").trim();
+    if (configured) out.push(configured);
+    const env = (process.env.HERMES_HOME || process.env.HERMES_CONFIG_DIR || "").trim();
+    if (env) out.push(env);
+    try {
+      out.push(path.join(os.homedir(), ".hermes"));
+    } catch {
+      /* ignore */
+    }
+    return out;
+  }
+
+  /**
+   * Read the REAL underlying model id + its context window from the local
+   * Hermes config (the gateway API only ever advertises the "hermes-agent"
+   * meta-label). Returns null when no config.yaml can be found/parsed.
+   */
+  readHermesModelConfig(): { model: string; contextWindow?: number } | null {
+    for (const home of this.hermesHomeCandidates()) {
+      try {
+        const cfgPath = path.join(home, "config.yaml");
+        if (!fs.existsSync(cfgPath)) continue;
+        const cfg = parseConfigModel(fs.readFileSync(cfgPath, "utf-8"));
+        if (!cfg.model) continue;
+        let contextWindow: number | undefined;
+        try {
+          const cachePath = path.join(home, "context_length_cache.yaml");
+          if (fs.existsSync(cachePath)) {
+            contextWindow = parseContextLengthCache(fs.readFileSync(cachePath, "utf-8"), cfg.model);
+          }
+        } catch {
+          /* cache optional */
+        }
+        return { model: cfg.model, ...(contextWindow ? { contextWindow } : {}) };
+      } catch {
+        /* try next candidate */
+      }
+    }
+    return null;
   }
 
   /** Refresh the footer meta bar in every open Hermes view. */

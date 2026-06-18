@@ -165,6 +165,60 @@ export function contextPercent(usedPromptTokens: number, contextWindow: number):
   return Math.min(100, Math.max(0, pct));
 }
 
+/** Strip a YAML scalar's quotes / inline `# comment` to its bare value. */
+function cleanScalar(raw: string): string {
+  let v = raw.trim();
+  if (v[0] === '"' || v[0] === "'") {
+    const q = v[0];
+    const end = v.indexOf(q, 1);
+    if (end > 0) return v.slice(1, end);
+  }
+  const hash = v.indexOf(" #");
+  if (hash >= 0) v = v.slice(0, hash);
+  return v.trim();
+}
+
+/**
+ * Extract the real underlying model + provider from a Hermes `config.yaml`.
+ * The gateway only ever advertises the meta-label ("hermes-agent" / the profile
+ * name) over its API, so the actual model (e.g. "gpt-5.5") is only readable from
+ * the top-level `model:` block. Scoped to that block so the many other
+ * `default:`/`model:` keys (providers, etc.) don't leak in.
+ */
+export function parseConfigModel(yamlText: string): { model?: string; provider?: string } {
+  const lines = (yamlText || "").split(/\r?\n/);
+  let i = lines.findIndex((l) => /^model:\s*(#.*)?$/.test(l));
+  if (i < 0) return {};
+  const out: { model?: string; provider?: string } = {};
+  for (i += 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim() === "" || /^\s*#/.test(line)) continue;
+    if (!/^\s/.test(line)) break; // dedent to column 0 = next top-level key
+    const m = /^\s+(default|model):\s*(.+)$/.exec(line);
+    if (m && !out.model) out.model = cleanScalar(m[2]);
+    const p = /^\s+provider:\s*(.+)$/.exec(line);
+    if (p && !out.provider) out.provider = cleanScalar(p[1]);
+  }
+  return out;
+}
+
+/**
+ * Look up a model's context window from a Hermes `context_length_cache.yaml`.
+ * Keys look like `gpt-5.5@https://.../codex: 272000`; we match on the bare model
+ * id (the part before `@`). Returns undefined when not present.
+ */
+export function parseContextLengthCache(yamlText: string, modelId: string): number | undefined {
+  const want = humanizeModel(modelId);
+  if (!want) return undefined;
+  for (const line of (yamlText || "").split(/\r?\n/)) {
+    if (!/^\s/.test(line)) continue; // only indented entries
+    const m = /^\s+(.+):\s*(\d+)\s*$/.exec(line); // greedy key -> last colon before digits
+    if (!m) continue;
+    if (humanizeModel(m[1]) === want) return Number(m[2]);
+  }
+  return undefined;
+}
+
 /**
  * Greeting options for the empty-chat state, personalized when a name is set
  * (mirrors Claudian's greeting array). The view picks one at random.

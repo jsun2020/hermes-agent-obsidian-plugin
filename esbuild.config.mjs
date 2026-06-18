@@ -25,6 +25,9 @@ const context = await esbuild.context({
     "https",
     "url",
     "crypto",
+    "fs",
+    "os",
+    "path",
     "@codemirror/state",
     "@codemirror/view",
     "@lezer/common"

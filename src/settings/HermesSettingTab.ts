@@ -64,13 +64,29 @@ export class HermesSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Model")
-      .setDesc('Model id, e.g. "gpt-5.5". Leave empty to use the gateway default. Use "Test connection" to list models.')
+      .setDesc('Model id, e.g. "gpt-5.5". Leave empty to show the real model from your Hermes config. Use "Test connection" to list models.')
       .addText((text) =>
         text
-          .setPlaceholder("(gateway default)")
+          .setPlaceholder("(from Hermes config)")
           .setValue(this.plugin.settings.model)
           .onChange(async (v) => {
             this.plugin.settings.model = v.trim();
+            await this.plugin.saveSettings();
+            this.plugin.reloadModelInViews();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Hermes home (for model name)")
+      .setDesc(
+        "Folder containing config.yaml, used to show the real model (e.g. gpt-5.5) and its context window — the gateway API only reports \"hermes-agent\". Leave empty to auto-detect ($HERMES_HOME, then ~/.hermes). Portable build: point this at the hermes-data/hermes folder next to the exe."
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("(auto-detect)")
+          .setValue(this.plugin.settings.hermesHome)
+          .onChange(async (v) => {
+            this.plugin.settings.hermesHome = v.trim();
             await this.plugin.saveSettings();
             this.plugin.reloadModelInViews();
           })

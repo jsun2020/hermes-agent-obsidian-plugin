@@ -17,7 +17,9 @@ import {
   humanizeModel,
   contextWindowFor,
   contextPercent,
-  greetingOptions
+  greetingOptions,
+  parseConfigModel,
+  parseContextLengthCache
 } from "./.build/protocol.mjs";
 
 test("parseSseBlock parses data-only blocks with CRLF", () => {
@@ -133,6 +135,42 @@ test("contextPercent computes a clamped, rounded percentage", () => {
   assert.equal(contextPercent(0, 272000), 0);
   assert.equal(contextPercent(999999999, 272000), 100); // clamp high
   assert.equal(contextPercent(100, 0), 0); // no window -> 0
+});
+
+test("parseConfigModel reads the top-level model block only", () => {
+  const yaml = [
+    "# comment",
+    "model:",
+    "  # Default model",
+    '  default: "gpt-5.5"',
+    '  provider: "openai-codex"',
+    "  openai_runtime: codex_app_server",
+    "",
+    "providers:",
+    "  some:",
+    "    default: nope",
+    "    model: alsonope"
+  ].join("\n");
+  assert.deepEqual(parseConfigModel(yaml), { model: "gpt-5.5", provider: "openai-codex" });
+});
+
+test("parseConfigModel handles the 'model:' key alias and inline comments", () => {
+  const yaml = "model:\n  model: gpt-5.4   # active\n  provider: auto\n";
+  assert.deepEqual(parseConfigModel(yaml), { model: "gpt-5.4", provider: "auto" });
+});
+
+test("parseConfigModel returns empty when no model block", () => {
+  assert.deepEqual(parseConfigModel("other:\n  default: x\n"), {});
+});
+
+test("parseContextLengthCache matches on the bare model id", () => {
+  const yaml =
+    "context_lengths:\n" +
+    "  gpt-5.5@https://chatgpt.com/backend-api/codex: 272000\n" +
+    "  gpt-4o@https://api.openai.com/v1: 128000\n";
+  assert.equal(parseContextLengthCache(yaml, "gpt-5.5"), 272000);
+  assert.equal(parseContextLengthCache(yaml, "openai-codex/gpt-4o"), 128000);
+  assert.equal(parseContextLengthCache(yaml, "gpt-9"), undefined);
 });
 
 test("greetingOptions personalizes when a name is set", () => {
