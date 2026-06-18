@@ -38,10 +38,24 @@ npm test           # runs protocol unit tests (Node built-in test runner)
 `npm run build` produces `main.js` next to `manifest.json` and `styles.css` — the three files
 Obsidian needs.
 
-## Install into the vault
+## Install
 
-Copy `main.js`, `manifest.json`, and `styles.css` into a **new** plugin folder (do NOT touch the
-existing `claudian` folder):
+### Via BRAT (recommended for now)
+
+This plugin is distributed from GitHub releases, so the easiest install is the
+[BRAT](https://github.com/TfTHacker/obsidian42-brat) community plugin:
+
+1. Install **BRAT** from Obsidian's Community plugins browser and enable it.
+2. Run the command **BRAT: Add a beta plugin for testing**.
+3. Paste the repo URL: `https://github.com/jsun2020/hermes-agent-obsidian-plugin`
+4. BRAT downloads the latest release and installs **Hermes Agent**; enable it under
+   Settings -> Community plugins. BRAT will also keep it auto-updated.
+
+### Manual
+
+Download `main.js`, `manifest.json`, and `styles.css` from the
+[latest release](https://github.com/jsun2020/hermes-agent-obsidian-plugin/releases/latest)
+and copy them into a **new** plugin folder (do NOT touch the existing `claudian` folder):
 
 ```
 C:\Users\sr9rfx\Obsidian-vault\.obsidian\plugins\hermes-agent\
