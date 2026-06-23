@@ -20,11 +20,60 @@ The transport logic is a direct port of Hermes Desktop's own client (`src/main/h
 
 ## Prerequisites
 
+The plugin only needs the **Hermes gateway HTTP API** reachable (default `http://127.0.0.1:8642`).
+It does not talk to Hermes Desktop directly, so it works whether the gateway is started by the
+Desktop app **or** by the command-line / TUI install. Pick the path that matches your setup.
+
+### Option A — Hermes Desktop (easiest)
+
 1. **Install + run Hermes Desktop at least once.** This creates `~/.hermes` (on Windows:
    `%USERPROFILE%\.hermes`), generates `API_SERVER_KEY`, and starts the gateway. The portable
    build is at `hermes-desktop/dist/hermes-desktop-0.5.8-portable.exe`.
 2. Find your key in `%USERPROFILE%\.hermes\.env` (line `API_SERVER_KEY=...`).
 3. The gateway must be running (Hermes Desktop open) when you use the plugin.
+
+### Option B — CLI / TUI install (no Desktop)
+
+The gateway is a subcommand of the Python Hermes Agent CLI, so you don't need Desktop — but note
+that **the TUI is not the gateway**. The TUI is an interactive chat REPL; it does not expose the
+HTTP API the plugin needs. Run the gateway as its own process, *in addition to* (or instead of)
+the TUI:
+
+1. **Enable the API server** in `~/.hermes/config.yaml` (Desktop writes this automatically; CLI
+   users add it once):
+   ```yaml
+   platforms:
+     api_server:
+       enabled: true
+       extra:
+         port: 8642
+         host: "127.0.0.1"
+   ```
+   (Or pass it at launch via env: `API_SERVER_ENABLED=true`, `API_SERVER_PORT=8642`.)
+2. **Set `API_SERVER_KEY`** so the gateway requires auth (anonymous requests get 401). Put it in
+   `~/.hermes/.env` (`API_SERVER_KEY=...`) or export it in the env, then paste the same value into
+   the plugin. If it isn't set, the gateway runs unauthenticated and history-load is disabled.
+3. **Start the gateway:**
+   ```bash
+   hermes gateway
+   ```
+   Leave it running while you use the plugin. (The TUI can run separately; it shares the same
+   `~/.hermes` config and underlying model, but it is not what the plugin connects to.)
+4. **Sanity-check the gateway is up** before opening Obsidian — list models over the same HTTP API
+   the plugin uses:
+   ```bash
+   # bash
+   curl -H "Authorization: Bearer $API_SERVER_KEY" http://127.0.0.1:8642/v1/models
+   ```
+   ```powershell
+   # PowerShell
+   curl.exe -H "Authorization: Bearer $env:API_SERVER_KEY" http://127.0.0.1:8642/v1/models
+   ```
+   A JSON `{ "data": [ ... ] }` means the gateway is reachable and the key works. `401` means the
+   key is wrong/missing; a connection refused means the gateway isn't running.
+
+In both options the plugin is identical — set the base URL + key in settings and click
+**Test connection**.
 
 ## Build
 
@@ -227,7 +276,9 @@ Below the input, a Claudian-style meta bar shows, left to right:
 
 ## Troubleshooting
 
-- **"Cannot reach the gateway"** — start Hermes Desktop (it launches the gateway).
+- **"Cannot reach the gateway"** — start the gateway: launch Hermes Desktop (it auto-starts it), or
+  on a CLI/TUI install run `hermes gateway`. Running only the TUI is not enough — the TUI is a chat
+  REPL, not the HTTP gateway (see Prerequisites - Option B).
 - **Auth failed (401/403)** — re-paste `API_SERVER_KEY`; it must match the active profile's key.
 - **Empty/!200 from /v1/models** — older gateways may not expose it; the chat still works. Set the
   model id manually.

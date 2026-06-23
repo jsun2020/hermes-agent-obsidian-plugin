@@ -15,7 +15,7 @@ export class HermesSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Connection")
       .setDesc(
-        "Connects to the local Hermes gateway started by Hermes Desktop. Launch Hermes Desktop first; it runs the gateway on 127.0.0.1:8642 by default."
+        "Connects to the local Hermes gateway on 127.0.0.1:8642 by default. Start the gateway first: launch Hermes Desktop (it auto-starts the gateway), or on a CLI/TUI install run `hermes gateway`. The plugin works with either — it only needs the gateway's HTTP API reachable."
       )
       .setHeading();
 

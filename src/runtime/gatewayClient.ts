@@ -238,7 +238,7 @@ export class HermesGatewayClient {
       if (/ECONNREFUSED|timed out|ENOTFOUND|EHOSTUNREACH/i.test(msg)) {
         return {
           ok: false,
-          detail: `Cannot reach the gateway at ${this.base()}. Start Hermes Desktop (which launches the gateway), then retry. (${msg})`
+          detail: `Cannot reach the gateway at ${this.base()}. Start the Hermes gateway, then retry: launch Hermes Desktop, or (CLI/TUI install) run \`hermes gateway\`. (${msg})`
         };
       }
       if (/401|403/.test(msg)) {
