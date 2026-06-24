@@ -5,7 +5,9 @@ import * as path from "path";
 import { DEFAULT_SETTINGS, HermesSettings } from "./settings/types";
 import { HermesSettingTab } from "./settings/HermesSettingTab";
 import { HermesView, VIEW_TYPE_HERMES } from "./view/HermesView";
+import { HermesGraphView, VIEW_TYPE_HERMES_GRAPH } from "./view/HermesGraphView";
 import { HermesGatewayClient } from "./runtime/gatewayClient";
+import { SmartGraph } from "./runtime/graph";
 import { buildPrompt } from "./runtime/context";
 import { parseConfigModel, parseContextLengthCache } from "./runtime/protocol";
 import {
@@ -32,9 +34,14 @@ export default class HermesPlugin extends Plugin {
     );
 
     this.registerView(VIEW_TYPE_HERMES, (leaf) => new HermesView(leaf, this));
+    this.registerView(VIEW_TYPE_HERMES_GRAPH, (leaf) => new HermesGraphView(leaf, this));
 
     this.addRibbonIcon("bot", "Open Hermes Agent", () => {
       void this.activateView();
+    });
+
+    this.addRibbonIcon("git-fork", "Open Hermes smart graph", () => {
+      void this.activateGraphView();
     });
 
     this.addCommand({
@@ -49,6 +56,21 @@ export default class HermesPlugin extends Plugin {
       callback: async () => {
         const view = await this.activateView();
         view?.newTab();
+      }
+    });
+
+    this.addCommand({
+      id: "open-graph",
+      name: "Open smart graph",
+      callback: () => void this.activateGraphView()
+    });
+
+    this.addCommand({
+      id: "analyze-graph",
+      name: "Analyze vault for smart graph",
+      callback: async () => {
+        const view = await this.activateGraphView();
+        view?.analyzeFromCommand();
       }
     });
 
@@ -224,6 +246,58 @@ export default class HermesPlugin extends Plugin {
     }
     if (leaf) await workspace.revealLeaf(leaf);
     return (leaf?.view as HermesView) ?? null;
+  }
+
+  /**
+   * Reveal the smart-graph view in a main-area tab (a graph wants room, unlike
+   * the sidebar chat) and return it. Reuses an existing graph leaf if open.
+   */
+  async activateGraphView(): Promise<HermesGraphView | null> {
+    const { workspace } = this.app;
+    const existing = workspace.getLeavesOfType(VIEW_TYPE_HERMES_GRAPH);
+    let leaf: WorkspaceLeaf | null;
+    if (existing.length > 0) {
+      leaf = existing[0];
+    } else {
+      leaf = workspace.getLeaf("tab");
+      await leaf.setViewState({ type: VIEW_TYPE_HERMES_GRAPH, active: true });
+    }
+    if (leaf) await workspace.revealLeaf(leaf);
+    return (leaf?.view as HermesGraphView) ?? null;
+  }
+
+  // ---- smart-graph cache persistence ----
+  //
+  // The last analysis is cached in `graph-cache.json` in the plugin folder (NOT
+  // data.json, keeping it out of the settings/API-key file), so reopening the
+  // graph view shows the previous result instead of a blank canvas.
+
+  private graphCachePath(): string {
+    return normalizePath(`${this.manifest.dir}/graph-cache.json`);
+  }
+
+  /** Load the cached smart graph, or null if none/invalid (never throws). */
+  async loadGraphCache(): Promise<SmartGraph | null> {
+    try {
+      const p = this.graphCachePath();
+      const adapter = this.app.vault.adapter;
+      if (await adapter.exists(p)) {
+        const parsed = JSON.parse(await adapter.read(p)) as SmartGraph;
+        if (parsed && Array.isArray(parsed.nodes) && Array.isArray(parsed.edges)) return parsed;
+      }
+    } catch {
+      /* ignore a missing/corrupt cache */
+    }
+    return null;
+  }
+
+  /** Persist the latest smart graph (best effort; never breaks the view). */
+  async saveGraphCache(graph: SmartGraph): Promise<void> {
+    try {
+      await this.app.vault.adapter.write(this.graphCachePath(), JSON.stringify(graph));
+    } catch {
+      /* best effort */
+    }
   }
 
   private async sendNote(mdView: MarkdownView): Promise<void> {

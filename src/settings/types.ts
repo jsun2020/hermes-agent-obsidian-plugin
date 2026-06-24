@@ -47,6 +47,15 @@ export interface HermesSettings {
    * `hermes-data/hermes` folder next to the exe.
    */
   hermesHome: string;
+  /**
+   * Smart graph: maximum number of notes sent to Hermes for relationship
+   * analysis. Caps prompt size and the O(n^2) layout cost. Default 150.
+   */
+  graphMaxNotes: number;
+  /** Smart graph: drop inferred (semantic) edges weaker than this. Default 0.3. */
+  graphMinEdgeWeight: number;
+  /** Smart graph: also draw explicit [[wikilink]] edges alongside semantic ones. */
+  graphIncludeWikilinks: boolean;
 }
 
 export const DEFAULT_SETTINGS: HermesSettings = {
@@ -61,5 +70,8 @@ export const DEFAULT_SETTINGS: HermesSettings = {
   workingFolder: "",
   autoApproveTools: true,
   userName: "",
-  hermesHome: ""
+  hermesHome: "",
+  graphMaxNotes: 150,
+  graphMinEdgeWeight: 0.3,
+  graphIncludeWikilinks: true
 };

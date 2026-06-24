@@ -307,6 +307,28 @@ export class HermesGatewayClient {
     return handle;
   }
 
+  /**
+   * One-shot, non-streaming convenience wrapper over `sendMessage`: send a
+   * single prompt and resolve with the full accumulated reply text. Used by the
+   * smart-graph analysis (which wants one JSON blob, not a live stream). Reuses
+   * the exact transport selection / fallback logic of `sendMessage`, so there is
+   * no duplicated request code. Returns an abortable handle plus a promise.
+   */
+  runToCompletion(input: string, history: ChatMessage[] = []): { abort(): void; result: Promise<string> } {
+    let handle: ChatHandle | null = null;
+    const result = new Promise<string>((resolve, reject) => {
+      let buf = "";
+      handle = this.sendMessage(input, history, {
+        onChunk: (t) => {
+          buf += t;
+        },
+        onError: (m) => reject(new Error(m)),
+        onDone: () => resolve(buf)
+      });
+    });
+    return { abort: () => handle?.abort(), result };
+  }
+
   // ---- Chat Completions transport ----
 
   private startChat(

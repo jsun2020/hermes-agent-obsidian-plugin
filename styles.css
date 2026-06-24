@@ -441,3 +441,76 @@
   color: var(--text-error);
   opacity: 1;
 }
+
+/* ---- Smart graph view ---------------------------------------------------- */
+
+.hermes-graph-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+}
+
+.hermes-graph-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex: 0 0 auto;
+}
+
+.hermes-graph-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.hermes-graph-btn-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.hermes-graph-status {
+  margin-left: auto;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hermes-graph-canvas-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.hermes-graph-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+
+.hermes-graph-canvas.is-hovering-node {
+  cursor: pointer;
+}
+
+.hermes-graph-empty {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.hermes-graph-empty.is-visible {
+  display: flex;
+}

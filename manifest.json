@@ -1,7 +1,7 @@
 {
   "id": "hermes-agent",
   "name": "Hermes Agent",
-  "version": "0.8.5",
+  "version": "0.9.0",
   "minAppVersion": "1.7.2",
   "description": "Chat with a locally installed Hermes Agent (Desktop or CLI/TUI) from your vault. Send the current note or selection to the local Hermes gateway and stream replies in a sidebar, with agent file tools and saved chat history.",
   "author": "Jason",

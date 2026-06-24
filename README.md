@@ -265,6 +265,31 @@ Below the input, a Claudian-style meta bar shows, left to right:
 - **Folder chip** — the agent's working folder. Click to open a **native folder picker**; the chip
   dims when auto-approve is off (read-only).
 
+### Smart graph
+
+An **agent-built relationship graph** of your vault. Unlike Obsidian's native Graph View — which only
+knows explicit `[[wikilinks]]` — this asks Hermes to read a summary of your notes and surface
+**semantic** connections: shared topics, one note elaborating another, prerequisites/dependencies, and
+contradictions.
+
+- Open it from the ribbon **git-fork** icon or the command **Open smart graph** (it opens in a main
+  editor tab, not the sidebar — a graph wants room).
+- Click **Analyze vault** (or the command **Analyze vault for smart graph**). The plugin gathers your
+  notes (title + a short excerpt + existing wikilinks), sends them to Hermes in a single call, and
+  renders the returned relationships as an interactive force-directed graph.
+- **Interact**: drag a node to reposition it, drag the background to pan, scroll to zoom, hover a node
+  to see its relationship labels, and **click a node to open that note** in a new tab. The **fit**
+  button reframes the whole graph.
+- **Semantic** edges (inferred by Hermes) are drawn in the accent color and weighted by strength;
+  muted edges are explicit wikilinks (toggle them off in settings). Nodes are tinted by topic group
+  when Hermes returns one.
+- Settings (under **Smart graph**): **Max notes to analyze** (caps prompt size; large vaults keep the
+  most-linked notes), **Minimum edge strength** (hide weak inferred links), and **Show wikilink
+  edges**.
+- The last analysis is cached to `graph-cache.json` in the plugin folder (**not** `data.json`), so
+  reopening the view shows your previous graph instead of a blank canvas. Re-run **Analyze vault** to
+  refresh it. Like the chat, this needs the gateway reachable and a model configured.
+
 ## Manual test checklist
 
 1. With Hermes Desktop running, open settings and click **Test connection** -> expect

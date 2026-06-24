@@ -201,6 +201,53 @@ export class HermesSettingTab extends PluginSettingTab {
           })
       );
 
+    new Setting(containerEl)
+      .setName("Smart graph")
+      .setDesc(
+        "An agent-built relationship graph: Hermes reads your notes and surfaces semantic links (shared topics, elaborations, prerequisites) beyond explicit [[wikilinks]]. Open it from the ribbon or the \"Open smart graph\" command, then click \"Analyze vault\"."
+      )
+      .setHeading();
+
+    new Setting(containerEl)
+      .setName("Max notes to analyze")
+      .setDesc("Upper bound on how many notes are sent to Hermes per analysis. Larger vaults are sampled to this many. Default 150.")
+      .addText((text) =>
+        text
+          .setValue(String(this.plugin.settings.graphMaxNotes))
+          .onChange(async (v) => {
+            const n = parseInt(v, 10);
+            if (!Number.isNaN(n) && n >= 5 && n <= 1000) {
+              this.plugin.settings.graphMaxNotes = n;
+              await this.plugin.saveSettings();
+            }
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Minimum edge strength")
+      .setDesc("Inferred (semantic) connections weaker than this are hidden. 0 = show all, 1 = only the strongest. Default 0.3.")
+      .addText((text) =>
+        text
+          .setValue(String(this.plugin.settings.graphMinEdgeWeight))
+          .onChange(async (v) => {
+            const n = parseFloat(v);
+            if (!Number.isNaN(n) && n >= 0 && n <= 1) {
+              this.plugin.settings.graphMinEdgeWeight = n;
+              await this.plugin.saveSettings();
+            }
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Show wikilink edges")
+      .setDesc("Also draw explicit [[wikilink]] connections (in a muted color) alongside the inferred semantic ones.")
+      .addToggle((tg) =>
+        tg.setValue(this.plugin.settings.graphIncludeWikilinks).onChange(async (v) => {
+          this.plugin.settings.graphIncludeWikilinks = v;
+          await this.plugin.saveSettings();
+        })
+      );
+
     const testSetting = new Setting(containerEl)
       .setName("Test connection")
       .setDesc("Probe the gateway and report transport + available models.");
