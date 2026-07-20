@@ -11,14 +11,20 @@
 //   [Chat]  POST /v1/chat/completions     -> OpenAI-compatible SSE
 //   GET  /v1/models                       -> model list (test/connect)
 //
-// Auth: Authorization: Bearer <API_SERVER_KEY>. We talk to it from the Node
-// side (Electron renderer with Node integration), exactly as Desktop does, so
-// there is no browser CORS involved and Node's http client ignores the system
-// proxy for loopback addresses.
+// Auth: Authorization: Bearer <key>. We use the standard browser `fetch` API
+// (available in both the Obsidian desktop renderer and Obsidian mobile's
+// webview). Using `fetch` (rather than Node's `http`/`https`) is what lets this
+// plugin run on iOS/Android, where there is no Node runtime. The trade-off is
+// that cross-origin requests from the mobile webview are subject to CORS, so
+// the gateway must allow the browser Origin (see the plugin README's iOS
+// notes) and we must avoid request headers that aren't CORS-allowed — hence we
+// pass the session id only in the request body (`session_id`) and never set a
+// custom `X-Hermes-Session-Id` request header.
+//
+// NOTE: `fetch`, `ReadableStream`, `TextDecoder`, `AbortController`, and
+// `AbortSignal.timeout` are all globals in the Obsidian runtime; they are not
+// imported and must not be bundled by esbuild.
 
-import * as http from "http";
-import * as https from "https";
-import { randomUUID } from "crypto";
 import { HermesSettings } from "../settings/types";
 import {
   HermesCapabilities,
@@ -62,12 +68,32 @@ export interface TestResult {
   models?: string[];
 }
 
+// ---- UUID helper (Node's crypto.randomUUID is unavailable on mobile) -------
+function uuid(): string {
+  const g = globalThis as { crypto?: { randomUUID?: () => string } };
+  if (g.crypto?.randomUUID) {
+    try {
+      return g.crypto.randomUUID();
+    } catch {
+      /* fall through to manual generator */
+    }
+  }
+  // RFC4122-ish v4, good enough for a session id.
+  let s = "";
+  for (let i = 0; i < 32; i++) {
+    const r = (Math.random() * 16) | 0;
+    if (i === 8 || i === 12 || i === 16 || i === 20) s += "-";
+    s += (i === 12 ? 4 : i === 16 ? (r & 0x3) | 0x8 : r).toString(16);
+  }
+  return s;
+}
+
 // ---- the client ------------------------------------------------------------
 
 interface RawResponse {
   status: number;
   body: string;
-  headers: http.IncomingHttpHeaders;
+  headers: Record<string, string>;
 }
 
 export class HermesGatewayClient {
@@ -102,10 +128,6 @@ export class HermesGatewayClient {
     return key ? { Authorization: `Bearer ${key}` } : {};
   }
 
-  private requester(url: string): typeof http | typeof https {
-    return url.startsWith("https") ? https : http;
-  }
-
   /** One-shot (non-streaming) JSON request used for capabilities/models. */
   private async jsonRequest(
     path: string,
@@ -114,27 +136,30 @@ export class HermesGatewayClient {
     timeoutMs = 8000
   ): Promise<RawResponse> {
     const url = `${this.base()}${path}`;
-    const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body), "utf-8");
     const headers: Record<string, string> = { ...this.authHeaders() };
-    if (payload) {
+    let payload: string | undefined;
+    if (body !== undefined) {
+      payload = JSON.stringify(body);
       headers["Content-Type"] = "application/json";
-      headers["Content-Length"] = String(payload.length);
     }
-    return new Promise<RawResponse>((resolve, reject) => {
-      const req = this.requester(url).request(url, { method, headers, timeout: timeoutMs }, (res) => {
-        let raw = "";
-        res.on("data", (c: Buffer) => (raw += c.toString()));
-        res.on("end", () =>
-          resolve({ status: res.statusCode || 0, body: raw, headers: res.headers })
-        );
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, {
+        method,
+        headers,
+        body: payload,
+        signal: controller.signal
       });
-      req.on("error", reject);
-      req.on("timeout", () => {
-        req.destroy(new Error("request timed out"));
+      const text = await res.text();
+      const outHeaders: Record<string, string> = {};
+      res.headers.forEach((v, k) => {
+        outHeaders[k.toLowerCase()] = v;
       });
-      if (payload) req.write(payload);
-      req.end();
-    });
+      return { status: res.status, body: text, headers: outHeaders };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async getCapabilities(force = false): Promise<HermesCapabilities | null> {
@@ -235,7 +260,7 @@ export class HermesGatewayClient {
       };
     } catch (e) {
       const msg = (e as Error)?.message || String(e);
-      if (/ECONNREFUSED|timed out|ENOTFOUND|EHOSTUNREACH/i.test(msg)) {
+      if (/ECONNREFUSED|timed out|ENOTFOUND|EHOSTUNREACH|Failed to fetch|NetworkError/i.test(msg)) {
         return {
           ok: false,
           detail: `Cannot reach the gateway at ${this.base()}. Start the Hermes gateway, then retry: launch Hermes Desktop, or (CLI/TUI install) run \`hermes gateway\`. (${msg})`
@@ -353,14 +378,18 @@ export class HermesGatewayClient {
     if (resumeSessionId) bodyObj.session_id = resumeSessionId;
     if (s.reasoningEffort) bodyObj.reasoning_effort = s.reasoningEffort;
 
-    const payload = Buffer.from(JSON.stringify(bodyObj), "utf-8");
+    // The session id is generated client-side so we don't depend on reading a
+    // custom response header (which CORS would hide from the mobile webview).
+    // It is carried in the request body (`session_id`) for server-side
+    // continuity, never as a custom request header.
+    const hasKey = !!(this.getSettings().apiKey || "").trim();
+    const sessionId = resumeSessionId || (hasKey ? `obs-${Date.now()}-${uuid()}` : "");
+
+    const payload = JSON.stringify(bodyObj);
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
-      "Content-Length": String(payload.length),
       ...this.authHeaders()
     };
-    let sessionId = resumeSessionId || (headers.Authorization ? `obs-${Date.now()}-${randomUUID()}` : "");
-    if (sessionId) headers["X-Hermes-Session-Id"] = sessionId;
 
     const url = `${this.base()}/v1/chat/completions`;
     let hasContent = false;
@@ -385,66 +414,72 @@ export class HermesGatewayClient {
       return false;
     };
 
-    const req = this.requester(url).request(
-      url,
-      { method: "POST", headers, timeout: s.requestTimeoutMs },
-      (res) => {
-        const sid = res.headers["x-hermes-session-id"];
-        if (typeof sid === "string" && sid) sessionId = sid;
+    const controller = new AbortController();
+    reqs.push({ destroy: () => controller.abort() });
+    const timer = setTimeout(() => controller.abort(), s.requestTimeoutMs);
 
-        if (res.statusCode !== 200) {
-          let errBody = "";
-          res.on("data", (d: Buffer) => (errBody += d.toString()));
-          res.on("end", () => {
-            try {
-              const err = JSON.parse(errBody) as { error?: { message?: unknown } };
-              const m = err.error?.message;
-              finish(typeof m === "string" ? m : `API error ${res.statusCode}`);
-            } catch {
-              finish(`Gateway returned ${res.statusCode}: ${errBody.slice(0, 200)}`);
-            }
-          });
+    void (async () => {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers,
+          body: payload,
+          signal: controller.signal
+        });
+
+        if (res.status !== 200) {
+          const errBody = await res.text();
+          try {
+            const err = JSON.parse(errBody) as { error?: { message?: unknown } };
+            const m = err.error?.message;
+            finish(typeof m === "string" ? m : `API error ${res.status}`);
+          } catch {
+            finish(`Gateway returned ${res.status}: ${errBody.slice(0, 200)}`);
+          }
           return;
         }
 
+        if (!res.body) {
+          finish(hasContent ? undefined : lastError || undefined, sessionId);
+          return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
         let buffer = "";
-        res.on("data", (chunk: Buffer) => {
-          buffer += chunk.toString();
-          const parts = buffer.split("\n\n");
-          buffer = parts.pop() || "";
-          for (const part of parts) {
-            const parsed = parseSseBlock(part);
-            if (!parsed) continue;
-            if (parsed.eventType) continue; // custom (tool-progress) events — ignore for now
-            if (processData(parsed.data)) return;
-          }
-        });
-        res.on("end", () => {
-          if (buffer.trim()) {
-            for (const part of buffer.split("\n\n")) {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const parts = buffer.split("\n\n");
+            buffer = parts.pop() || "";
+            for (const part of parts) {
               const parsed = parseSseBlock(part);
-              if (parsed && !parsed.eventType && processData(parsed.data)) return;
+              if (!parsed) continue;
+              if (parsed.eventType) continue; // custom (tool-progress) events — ignore for now
+              if (processData(parsed.data)) return;
             }
           }
-          finish(hasContent ? undefined : lastError || undefined, sessionId);
-        });
-        res.on("error", (err) => {
-          if (isAborted() || err.name === "AbortError" || err.message === "aborted") return;
-          finish(`Stream error: ${err.message}`);
-        });
+        } catch (err) {
+          if (isAborted() || (err as Error)?.name === "AbortError") return;
+          finish(`Stream error: ${(err as Error)?.message || err}`);
+          return;
+        }
+        if (buffer.trim()) {
+          for (const part of buffer.split("\n\n")) {
+            const parsed = parseSseBlock(part);
+            if (parsed && !parsed.eventType && processData(parsed.data)) return;
+          }
+        }
+        finish(hasContent ? undefined : lastError || undefined, sessionId);
+      } catch (err) {
+        if (isAborted() || (err as Error)?.name === "AbortError") return;
+        finish(`API request failed: ${(err as Error)?.message || err}`);
+      } finally {
+        clearTimeout(timer);
       }
-    );
-    reqs.push(req);
-    req.on("error", (err) => {
-      if (isAborted() || err.name === "AbortError") return;
-      finish(`API request failed: ${err.message}`);
-    });
-    req.on("timeout", () => {
-      req.destroy();
-      if (!isAborted()) finish("Request timed out.");
-    });
-    req.write(payload);
-    req.end();
+    })();
   }
 
   // ---- Runs transport ----
@@ -461,7 +496,8 @@ export class HermesGatewayClient {
     const s = this.getSettings();
     const apiUrl = this.base();
     const auth = this.authHeaders();
-    const sessionId = resumeSessionId || (auth.Authorization ? `obs-${Date.now()}-${randomUUID()}` : "");
+    const hasKey = !!(this.getSettings().apiKey || "").trim();
+    const sessionId = resumeSessionId || (hasKey ? `obs-${Date.now()}-${uuid()}` : "");
 
     const bodyObj: Record<string, unknown> = {
       model: s.model || "hermes-agent",
@@ -480,13 +516,11 @@ export class HermesGatewayClient {
     if (s.reasoningEffort) bodyObj.reasoning_effort = s.reasoningEffort;
     if (sessionId) bodyObj.session_id = sessionId;
 
-    const payload = Buffer.from(JSON.stringify(bodyObj), "utf-8");
+    const payload = JSON.stringify(bodyObj);
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
-      "Content-Length": String(payload.length),
       ...auth
     };
-    if (sessionId) headers["X-Hermes-Session-Id"] = sessionId;
 
     let runId = "";
     let hasContent = false;
@@ -566,109 +600,124 @@ export class HermesGatewayClient {
 
     const openEventStream = (id: string) => {
       const eventsUrl = `${apiUrl}/v1/runs/${encodeURIComponent(id)}/events`;
-      const eventsReq = this.requester(eventsUrl).request(
-        eventsUrl,
-        { method: "GET", headers: auth, timeout: s.requestTimeoutMs },
-        (res) => {
-          if (res.statusCode !== 200) {
+      const controller = new AbortController();
+      reqs.push({ destroy: () => controller.abort() });
+      const timer = setTimeout(() => controller.abort(), s.requestTimeoutMs);
+
+      void (async () => {
+        try {
+          const res = await fetch(eventsUrl, {
+            method: "GET",
+            headers: auth,
+            signal: controller.signal
+          });
+          if (res.status !== 200) {
             fallback();
             return;
           }
+          if (!res.body) {
+            finish(hasContent ? undefined : undefined, sessionId);
+            return;
+          }
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
           let buffer = "";
-          res.on("data", (chunk: Buffer) => {
-            buffer += chunk.toString();
-            const parts = buffer.split("\n\n");
-            buffer = parts.pop() || "";
-            for (const part of parts) {
-              const parsed = parseSseBlock(part);
-              if (!parsed || !parsed.data || parsed.data.startsWith(":")) continue;
-              try {
-                handleEvent(JSON.parse(parsed.data) as Record<string, unknown>);
-              } catch {
-                /* skip malformed event */
-              }
-            }
-          });
-          res.on("end", () => {
-            if (buffer.trim()) {
-              const parsed = parseSseBlock(buffer);
-              if (parsed?.data) {
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              const parts = buffer.split("\n\n");
+              buffer = parts.pop() || "";
+              for (const part of parts) {
+                const parsed = parseSseBlock(part);
+                if (!parsed || !parsed.data || parsed.data.startsWith(":")) continue;
                 try {
                   handleEvent(JSON.parse(parsed.data) as Record<string, unknown>);
                 } catch {
-                  /* ignore */
+                  /* skip malformed event */
                 }
               }
             }
-            finish(hasContent ? undefined : undefined, sessionId);
-          });
+          } catch (err) {
+            if (isAborted() || (err as Error)?.name === "AbortError") return;
+            if (!hasContent) {
+              fallback();
+              return;
+            }
+            finish(`Run event stream failed: ${(err as Error)?.message || err}`);
+            return;
+          }
+          if (buffer.trim()) {
+            const parsed = parseSseBlock(buffer);
+            if (parsed?.data) {
+              try {
+                handleEvent(JSON.parse(parsed.data) as Record<string, unknown>);
+              } catch {
+                /* ignore */
+              }
+            }
+          }
+          finish(hasContent ? undefined : undefined, sessionId);
+        } catch (err) {
+          if (isAborted() || (err as Error)?.name === "AbortError") return;
+          if (!hasContent) fallback();
+          else finish(`Run event stream failed: ${(err as Error)?.message || err}`);
+        } finally {
+          clearTimeout(timer);
         }
-      );
-      reqs.push(eventsReq);
-      eventsReq.on("error", (err) => {
-        if (isAborted() || err.name === "AbortError") return;
-        if (!hasContent) fallback();
-        else finish(`Run event stream failed: ${err.message}`);
-      });
-      eventsReq.on("timeout", () => {
-        eventsReq.destroy();
-        if (!hasContent) fallback();
-        else finish("Run event stream timed out.");
-      });
-      eventsReq.end();
+      })();
     };
 
     const startUrl = `${apiUrl}/v1/runs`;
-    const startReq = this.requester(startUrl).request(
-      startUrl,
-      { method: "POST", headers, timeout: 30000 },
-      (res) => {
-        let raw = "";
-        res.on("data", (c: Buffer) => (raw += c.toString()));
-        res.on("end", () => {
-          if (res.statusCode !== 200 && res.statusCode !== 202) {
-            fallback();
-            return;
-          }
-          try {
-            const parsed = JSON.parse(raw) as { run_id?: unknown };
-            runId = typeof parsed.run_id === "string" ? parsed.run_id : "";
-          } catch {
-            runId = "";
-          }
-          if (!runId) {
-            fallback();
-            return;
-          }
-          openEventStream(runId);
+    const startController = new AbortController();
+    reqs.push({ destroy: () => startController.abort() });
+    const startTimer = setTimeout(() => startController.abort(), 30000);
+
+    void (async () => {
+      try {
+        const res = await fetch(startUrl, {
+          method: "POST",
+          headers,
+          body: payload,
+          signal: startController.signal
         });
+        if (res.status !== 200 && res.status !== 202) {
+          fallback();
+          return;
+        }
+        const raw = await res.text();
+        try {
+          const parsed = JSON.parse(raw) as { run_id?: unknown };
+          runId = typeof parsed.run_id === "string" ? parsed.run_id : "";
+        } catch {
+          runId = "";
+        }
+        if (!runId) {
+          fallback();
+          return;
+        }
+        openEventStream(runId);
+      } catch (err) {
+        if (isAborted() || (err as Error)?.name === "AbortError") return;
+        fallback();
+      } finally {
+        clearTimeout(startTimer);
       }
-    );
-    reqs.push(startReq);
-    startReq.on("error", (err) => {
-      if (isAborted() || err.name === "AbortError") return;
-      fallback();
-    });
-    startReq.on("timeout", () => {
-      startReq.destroy();
-      fallback();
-    });
-    startReq.write(payload);
-    startReq.end();
+    })();
   }
 
+  /** Cancel a run (best effort; fire-and-forget). */
   private postRunStop(apiUrl: string, runId: string): void {
     const url = `${apiUrl}/v1/runs/${encodeURIComponent(runId)}/stop`;
     try {
-      const req = this.requester(url).request(url, { method: "POST", headers: this.authHeaders() });
-      req.on("error", () => {});
-      req.end();
+      void fetch(url, { method: "POST", headers: this.authHeaders() }).catch(() => {});
     } catch {
       /* best effort */
     }
   }
 
-  /** Answer a pending tool-approval request for a run. */
+  /** Answer a pending tool-approval request for a run (fire-and-forget). */
   private postRunApproval(
     apiUrl: string,
     runId: string,
@@ -676,16 +725,12 @@ export class HermesGatewayClient {
   ): void {
     const url = `${apiUrl}/v1/runs/${encodeURIComponent(runId)}/approval`;
     try {
-      const payload = Buffer.from(JSON.stringify({ choice, resolve_all: true }), "utf-8");
+      const payload = JSON.stringify({ choice, resolve_all: true });
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
-        "Content-Length": String(payload.length),
         ...this.authHeaders()
       };
-      const req = this.requester(url).request(url, { method: "POST", headers });
-      req.on("error", () => {});
-      req.write(payload);
-      req.end();
+      void fetch(url, { method: "POST", headers, body: payload }).catch(() => {});
     } catch {
       /* best effort */
     }

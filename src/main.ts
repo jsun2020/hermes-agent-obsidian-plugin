@@ -1,7 +1,4 @@
 import { Editor, FileSystemAdapter, MarkdownView, Notice, Plugin, WorkspaceLeaf, normalizePath } from "obsidian";
-import * as fs from "fs";
-import * as os from "os";
-import * as path from "path";
 import { DEFAULT_SETTINGS, HermesSettings } from "./settings/types";
 import { HermesSettingTab } from "./settings/HermesSettingTab";
 import { HermesView, VIEW_TYPE_HERMES } from "./view/HermesView";
@@ -173,17 +170,34 @@ export default class HermesPlugin extends Plugin {
    * Candidate Hermes home directories (folders that hold `config.yaml`), in
    * priority order: the configured override, then `$HERMES_HOME`, then
    * `~/.hermes`. The gateway runs on this same machine, so these are readable.
+   *
+   * On Obsidian mobile there is no Node `fs`/`os`/`path` and no `process`, so
+   * we resolve these modules lazily and let the method return an empty list
+   * (the footer then falls back to the gateway-advertised meta-label). This is
+   * why the plugin can run on iOS/Android even though it was originally
+   * desktop-only.
    */
   private hermesHomeCandidates(): string[] {
     const out: string[] = [];
     const configured = (this.settings.hermesHome || "").trim();
     if (configured) out.push(configured);
-    const env = (process.env.HERMES_HOME || process.env.HERMES_CONFIG_DIR || "").trim();
-    if (env) out.push(env);
     try {
+      const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process;
+      const hermesHome = env?.env?.HERMES_HOME?.trim() || "";
+      const hermesConfigDir = env?.env?.HERMES_CONFIG_DIR?.trim() || "";
+      if (hermesHome) out.push(hermesHome);
+      if (hermesConfigDir) out.push(hermesConfigDir);
+    } catch {
+      /* no process global (mobile) */
+    }
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const os = require("os") as typeof import("os");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const path = require("path") as typeof import("path");
       out.push(path.join(os.homedir(), ".hermes"));
     } catch {
-      /* ignore */
+      /* fs/os/path unavailable (mobile) */
     }
     return out;
   }
@@ -191,28 +205,38 @@ export default class HermesPlugin extends Plugin {
   /**
    * Read the REAL underlying model id + its context window from the local
    * Hermes config (the gateway API only ever advertises the "hermes-agent"
-   * meta-label). Returns null when no config.yaml can be found/parsed.
+   * meta-label). Returns null when no config.yaml can be found/parsed — e.g. on
+   * mobile, where the plugin can't read the host filesystem.
    */
   readHermesModelConfig(): { model: string; contextWindow?: number } | null {
-    for (const home of this.hermesHomeCandidates()) {
-      try {
-        const cfgPath = path.join(home, "config.yaml");
-        if (!fs.existsSync(cfgPath)) continue;
-        const cfg = parseConfigModel(fs.readFileSync(cfgPath, "utf-8"));
-        if (!cfg.model) continue;
-        let contextWindow: number | undefined;
+    let fs: typeof import("fs") | undefined;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      fs = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const path = require("path") as typeof import("path");
+      for (const home of this.hermesHomeCandidates()) {
         try {
-          const cachePath = path.join(home, "context_length_cache.yaml");
-          if (fs.existsSync(cachePath)) {
-            contextWindow = parseContextLengthCache(fs.readFileSync(cachePath, "utf-8"), cfg.model);
+          const cfgPath = path.join(home, "config.yaml");
+          if (!fs.existsSync(cfgPath)) continue;
+          const cfg = parseConfigModel(fs.readFileSync(cfgPath, "utf-8"));
+          if (!cfg.model) continue;
+          let contextWindow: number | undefined;
+          try {
+            const cachePath = path.join(home, "context_length_cache.yaml");
+            if (fs.existsSync(cachePath)) {
+              contextWindow = parseContextLengthCache(fs.readFileSync(cachePath, "utf-8"), cfg.model);
+            }
+          } catch {
+            /* cache optional */
           }
+          return { model: cfg.model, ...(contextWindow ? { contextWindow } : {}) };
         } catch {
-          /* cache optional */
+          /* try next candidate */
         }
-        return { model: cfg.model, ...(contextWindow ? { contextWindow } : {}) };
-      } catch {
-        /* try next candidate */
       }
+    } catch {
+      /* fs unavailable (mobile) */
     }
     return null;
   }
