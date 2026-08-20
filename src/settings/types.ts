@@ -1,11 +1,12 @@
 // Plugin settings shape + defaults.
 
 export type TransportPreference = "auto" | "runs" | "chat";
+export type RequestTransportPreference = "auto" | "browser";
 
 export interface HermesSettings {
-  /** Base URL of the local Hermes gateway. Default profile pins port 8642. */
+  /** Base URL of the Hermes gateway. Default profile pins port 8642. */
   baseUrl: string;
-  /** API_SERVER_KEY from ~/.hermes/.env, pasted by the user (decision D1). */
+  /** API_SERVER_KEY from ~/.hermes/.env, pasted by the user. */
   apiKey: string;
   /** Model id (e.g. "gpt-5.5"). Empty -> the gateway's "hermes-agent" default. */
   model: string;
@@ -17,6 +18,8 @@ export interface HermesSettings {
    *  - chat: force OpenAI-compatible Chat Completions.
    */
   transport: TransportPreference;
+  /** How HTTP requests are made. Auto keeps Node HTTP on desktop. */
+  requestTransport: RequestTransportPreference;
   /** Reasoning effort hint: "", minimal, low, medium, high, xhigh. */
   reasoningEffort: string;
   /** When sending the current note, include its full text (not just the path). */
@@ -77,6 +80,7 @@ export const DEFAULT_SETTINGS: HermesSettings = {
   apiKey: "",
   model: "",
   transport: "auto",
+  requestTransport: "auto",
   reasoningEffort: "",
   includeNoteContent: true,
   requestTimeoutMs: 120000,

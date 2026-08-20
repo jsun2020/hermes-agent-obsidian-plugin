@@ -1,8 +1,7 @@
 // Build script for the Hermes Agent Obsidian plugin.
 // Bundles src/main.ts -> main.js (CommonJS) using esbuild, mirroring the
-// approach used by the Claudian plugin. Node builtins (http/https/crypto)
-// are kept external because Obsidian runs the plugin in an Electron renderer
-// with Node integration, so require("http") resolves at runtime.
+// approach used by the Claudian plugin. The Ignis-compatible transport relies
+// on browser fetch rather than Node http/https.
 import esbuild from "esbuild";
 
 const production = process.argv[2] === "production";
@@ -21,10 +20,7 @@ const context = await esbuild.context({
   external: [
     "obsidian",
     "electron",
-    "http",
-    "https",
     "url",
-    "crypto",
     "fs",
     "os",
     "path",

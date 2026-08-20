@@ -14,10 +14,52 @@ export class HermesSettingTab extends PluginSettingTab {
     containerEl.empty();
     new Setting(containerEl)
       .setName("Connection")
-      .setDesc(
-        "Connects to the local Hermes gateway on 127.0.0.1:8642 by default. Start the gateway first: launch Hermes Desktop (it auto-starts the gateway), or on a CLI/TUI install run `hermes gateway`. The plugin works with either — it only needs the gateway's HTTP API reachable."
-      )
+      .setDesc("Connect to a local Hermes gateway, or configure a reachable gateway address.")
       .setHeading();
+
+    new Setting(containerEl)
+      .setName("Gateway address")
+      .setDesc("Default: http://127.0.0.1:8642. Browser-hosted deployments may use their documented relay address.")
+      .addText((text) =>
+        text
+          .setPlaceholder("http://127.0.0.1:8642")
+          .setValue(this.plugin.settings.baseUrl)
+          .onChange(async (v) => {
+            this.plugin.settings.baseUrl = v.trim() || "http://127.0.0.1:8642";
+            await this.plugin.saveSettings();
+            this.plugin.reloadModelInViews();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Hermes API key")
+      .setDesc("Paste API_SERVER_KEY when the configured gateway requires bearer authentication.")
+      .addText((text) => {
+        text
+          .setPlaceholder("paste API_SERVER_KEY")
+          .setValue(this.plugin.settings.apiKey)
+          .onChange(async (v) => {
+            this.plugin.settings.apiKey = v.trim();
+            await this.plugin.saveSettings();
+            this.plugin.reloadModelInViews();
+          });
+        text.inputEl.type = "password";
+        return text;
+      });
+
+    new Setting(containerEl)
+      .setName("Request transport")
+      .setDesc("Auto keeps Node HTTP on desktop and uses browser requests only when Node HTTP is unavailable. Choose Browser for a supported browser-hosted deployment.")
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("auto", "Auto")
+          .addOption("browser", "Browser")
+          .setValue(this.plugin.settings.requestTransport)
+          .onChange(async (v) => {
+            this.plugin.settings.requestTransport = v as typeof this.plugin.settings.requestTransport;
+            await this.plugin.saveSettings();
+          })
+      );
 
     new Setting(containerEl)
       .setName("Your name")
@@ -31,36 +73,6 @@ export class HermesSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           })
       );
-
-    new Setting(containerEl)
-      .setName("Gateway base URL")
-      .setDesc("Default profile uses http://127.0.0.1:8642. A trailing /v1 is stripped automatically.")
-      .addText((text) =>
-        text
-          .setPlaceholder("http://127.0.0.1:8642")
-          .setValue(this.plugin.settings.baseUrl)
-          .onChange(async (v) => {
-            this.plugin.settings.baseUrl = v;
-            await this.plugin.saveSettings();
-            this.plugin.reloadModelInViews();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("API key (API_SERVER_KEY)")
-      .setDesc("Paste the API_SERVER_KEY from ~/.hermes/.env. Required for session continuity and auth.")
-      .addText((text) => {
-        text
-          .setPlaceholder("paste API_SERVER_KEY")
-          .setValue(this.plugin.settings.apiKey)
-          .onChange(async (v) => {
-            this.plugin.settings.apiKey = v.trim();
-            await this.plugin.saveSettings();
-            this.plugin.reloadModelInViews();
-          });
-        text.inputEl.type = "password";
-        return text;
-      });
 
     new Setting(containerEl)
       .setName("Model")

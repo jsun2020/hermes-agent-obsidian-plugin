@@ -1,7 +1,4 @@
 import { FileSystemAdapter, MarkdownView, Notice, Plugin, WorkspaceLeaf, normalizePath } from "obsidian";
-import * as fs from "fs";
-import * as os from "os";
-import * as path from "path";
 import { DEFAULT_SETTINGS, HermesSettings } from "./settings/types";
 import { HermesSettingTab } from "./settings/HermesSettingTab";
 import { HermesView, VIEW_TYPE_HERMES } from "./view/HermesView";
@@ -17,6 +14,12 @@ import {
   serializeHistoryFile,
   upsertConversation
 } from "./runtime/history";
+
+type NodeModules = {
+  fs: { existsSync(path: string): boolean; readFileSync(path: string, encoding: string): string };
+  os: { homedir(): string };
+  path: { join(...parts: string[]): string };
+};
 
 export default class HermesPlugin extends Plugin {
   settings!: HermesSettings;
@@ -319,16 +322,39 @@ export default class HermesPlugin extends Plugin {
     return adapter instanceof FileSystemAdapter ? adapter.getBasePath() : "";
   }
 
+  /** Node-only helpers are loaded lazily so the browser bundle can start. */
+  private nodeModules(): NodeModules | null {
+    const requireFn = (window as Window & { require?: unknown }).require;
+    if (typeof requireFn !== "function") return null;
+    const load = requireFn as (module: string) => unknown;
+    try {
+      return {
+        fs: load("fs") as NodeModules["fs"],
+        os: load("os") as NodeModules["os"],
+        path: load("path") as NodeModules["path"]
+      };
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * Candidate Hermes home directories (folders that hold `config.yaml`), in
    * priority order: the configured override, then `$HERMES_HOME`, then
    * `~/.hermes`. The gateway runs on this same machine, so these are readable.
    */
   private hermesHomeCandidates(): string[] {
+    const modules = this.nodeModules();
+    if (!modules) return [];
+    const { fs, os, path } = modules;
     const homes: string[] = [];
     const configured = (this.settings.hermesHome || "").trim();
     if (configured) homes.push(configured);
-    const env = (process.env.HERMES_HOME || process.env.HERMES_CONFIG_DIR || "").trim();
+    // Ignis may not expose process.env; keep the desktop compatibility path.
+    const processEnv = (window as unknown as {
+      process?: { env?: Record<string, string | undefined> };
+    }).process?.env;
+    const env = (processEnv?.HERMES_HOME || processEnv?.HERMES_CONFIG_DIR || "").trim();
     if (env) homes.push(env);
     try {
       homes.push(path.join(os.homedir(), ".hermes"));
@@ -340,7 +366,7 @@ export default class HermesPlugin extends Plugin {
     // must win over its parent home or the footer shows a stale model.
     const out: string[] = [];
     for (const home of homes) {
-      const profileDir = this.activeProfileDir(home);
+      const profileDir = this.activeProfileDir(home, fs, path);
       if (profileDir) out.push(profileDir);
       out.push(home);
     }
@@ -353,7 +379,7 @@ export default class HermesPlugin extends Plugin {
    * Returns "" when the home has no profiles — callers fall back to the home
    * itself, preserving the pre-profile behavior.
    */
-  private activeProfileDir(home: string): string {
+  private activeProfileDir(home: string, fs: NodeModules["fs"], path: NodeModules["path"]): string {
     try {
       const marker = path.join(home, "active_profile");
       if (!fs.existsSync(marker)) return "";
@@ -372,6 +398,9 @@ export default class HermesPlugin extends Plugin {
    * meta-label). Returns null when no config.yaml can be found/parsed.
    */
   readHermesModelConfig(): { model: string; contextWindow?: number } | null {
+    const modules = this.nodeModules();
+    if (!modules) return null;
+    const { fs, path } = modules;
     for (const home of this.hermesHomeCandidates()) {
       try {
         const cfgPath = path.join(home, "config.yaml");

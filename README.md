@@ -142,6 +142,16 @@ Open Settings -> Hermes Agent:
 - **Transport** — `Auto` recommended.
 - Optional: reasoning effort, include-full-note-content, request timeout, max tabs.
 
+### Browser-hosted Obsidian (Ignis)
+
+Desktop users should keep the default gateway address and **Request transport:
+Auto**. In a browser-hosted Obsidian deployment without Node HTTP, select
+**Request transport: Browser** (or leave Auto selected when Node HTTP is not
+available). The deployment administrator may provide a same-origin relay such
+as `/hermes`; enter that address only when it is documented for that deployment.
+The relay should keep gateway credentials server-side. Runs use status polling
+in this mode because some browser relays buffer Server-Sent Events.
+
 ### Agent workspace (file access)
 
 This is what makes Hermes a real collaborator instead of a chatbot: the vault becomes the

@@ -71,6 +71,7 @@ export class HermesView extends ItemView {
   private includeNoteToggle!: HTMLInputElement;
   private includeSelectionToggle!: HTMLInputElement;
   private statusEl!: HTMLElement;
+  private runningStatus = "";
   private metaModelEl!: HTMLElement;
   private metaThinkingEl!: HTMLElement;
   private metaTokensEl!: HTMLElement;
@@ -322,7 +323,7 @@ export class HermesView extends ItemView {
     const running = !!this.activeTab()?.handle;
     this.sendBtn.setText(running ? "Stop" : "Send");
     this.sendBtn.classList.toggle("is-running", running);
-    this.statusEl.setText(running ? "Hermes is thinking..." : "");
+    this.statusEl.setText(running ? this.runningStatus || "Hermes is working…" : "");
   }
 
   /**
@@ -630,6 +631,11 @@ export class HermesView extends ItemView {
           this.renderToolEvent(assistant, e);
           this.scrollToBottom(tab);
         },
+        onProgress: (text) => {
+          if (tab.id !== this.activeTabId) return;
+          this.runningStatus = text;
+          this.refreshRunningState();
+        },
         onUsage: (u: UsageInfo) => {
           assistant.usageEl.setText(
             `tokens: ${u.totalTokens} (in ${u.promptTokens} / out ${u.completionTokens})`
@@ -644,6 +650,7 @@ export class HermesView extends ItemView {
           assistant.contentEl.empty();
           assistant.contentEl.createDiv({ cls: "hermes-error", text: msg });
           tab.handle = null;
+          this.runningStatus = "";
           tab.messages.push({ role: "assistant", content: `[error] ${msg}` });
           tab.uiMeta.push(undefined);
           this.refreshRunningState();
@@ -655,6 +662,7 @@ export class HermesView extends ItemView {
           tab.messages.push({ role: "assistant", content: buffer });
           tab.uiMeta.push(undefined);
           tab.handle = null;
+          this.runningStatus = "";
           this.refreshRunningState();
           this.saveTabHistory(tab);
         }
@@ -670,6 +678,7 @@ export class HermesView extends ItemView {
     if (tab?.handle) {
       tab.handle.abort();
       tab.handle = null;
+      this.runningStatus = "";
       this.refreshRunningState();
     }
   }

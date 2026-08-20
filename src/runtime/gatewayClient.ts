@@ -11,14 +11,9 @@
 //   [Chat]  POST /v1/chat/completions     -> OpenAI-compatible SSE
 //   GET  /v1/models                       -> model list (test/connect)
 //
-// Auth: Authorization: Bearer <API_SERVER_KEY>. We talk to it from the Node
-// side (Electron renderer with Node integration), exactly as Desktop does, so
-// there is no browser CORS involved and Node's http client ignores the system
-// proxy for loopback addresses.
-
-import * as http from "http";
-import * as https from "https";
-import { randomUUID } from "crypto";
+// Desktop uses Node HTTP (which avoids the local gateway's browser CORS
+// restriction). Browser-hosted Obsidian uses the fetch adapter below only when
+// Node's requester is unavailable or the user explicitly opts into it.
 import { HermesSettings } from "../settings/types";
 import {
   HermesCapabilities,
@@ -47,6 +42,8 @@ export interface StreamCallbacks {
   onChunk(text: string): void;
   onReasoning?(text: string): void;
   onToolEvent?(event: ToolEvent): void;
+  /** A short, user-facing transport/activity update while a run is pending. */
+  onProgress?(text: string): void;
   onUsage?(usage: UsageInfo): void;
   onError(message: string): void;
   onDone(sessionId?: string): void;
@@ -68,7 +65,204 @@ export interface TestResult {
 interface RawResponse {
   status: number;
   body: string;
-  headers: http.IncomingHttpHeaders;
+  headers: Record<string, string>;
+}
+
+type EventHandler = (...args: unknown[]) => void;
+
+interface RequestLike {
+  on(event: string, handler: EventHandler): this;
+  write(chunk: unknown): void;
+  end(chunk?: unknown): void;
+  destroy(error?: Error): void;
+}
+
+interface Requester {
+  request(url: string, options: BrowserRequestOptions, onResponse?: (response: BrowserResponse) => void): RequestLike;
+}
+
+type IgnisWindow = Window & {
+  /** Native fetch retained by Ignis before its cross-origin proxy shim. */
+  __originalFetch?: typeof window.fetch;
+};
+
+interface BrowserRequestOptions {
+  method?: string;
+  headers?: Record<string, string>;
+  timeout?: number;
+}
+
+class BrowserResponse {
+  private listeners = new Map<string, EventHandler[]>();
+
+  constructor(
+    readonly statusCode: number,
+    readonly headers: Record<string, string>
+  ) {}
+
+  on(event: string, handler: EventHandler): this {
+    const handlers = this.listeners.get(event) || [];
+    handlers.push(handler);
+    this.listeners.set(event, handlers);
+    return this;
+  }
+
+  emit(event: string, ...args: unknown[]): void {
+    for (const handler of this.listeners.get(event) || []) handler(...args);
+  }
+}
+
+/** Small Node-request-shaped adapter so the protocol code below stays shared. */
+class BrowserRequest {
+  private readonly controller = new AbortController();
+  private readonly listeners = new Map<string, EventHandler[]>();
+  private readonly chunks: string[] = [];
+  private timer: number | null = null;
+  private started = false;
+
+  constructor(
+    private readonly url: string,
+    private readonly options: BrowserRequestOptions,
+    private readonly onResponse?: (response: BrowserResponse) => void
+  ) {}
+
+  on(event: string, handler: EventHandler): this {
+    const handlers = this.listeners.get(event) || [];
+    handlers.push(handler);
+    this.listeners.set(event, handlers);
+    return this;
+  }
+
+  write(chunk: unknown): void {
+    if (typeof chunk === "string") this.chunks.push(chunk);
+  }
+
+  end(chunk?: unknown): void {
+    if (chunk != null) this.write(chunk);
+    if (this.started) return;
+    this.started = true;
+    void this.start();
+  }
+
+  destroy(error?: Error): void {
+    if (this.timer !== null) window.clearTimeout(this.timer);
+    this.controller.abort();
+    if (error) this.emit("error", error);
+  }
+
+  private emit(event: string, ...args: unknown[]): void {
+    for (const handler of this.listeners.get(event) || []) handler(...args);
+  }
+
+  private async start(): Promise<void> {
+    if (this.options.timeout && this.options.timeout > 0) {
+      this.timer = window.setTimeout(() => {
+        this.emit("timeout");
+        this.controller.abort();
+      }, this.options.timeout);
+    }
+    try {
+      // Content-Length is a forbidden browser header. fetch determines it.
+      const headers = { ...(this.options.headers || {}) };
+      delete headers["Content-Length"];
+      delete headers["content-length"];
+      const response = await this.fetch(this.url, {
+        method: this.options.method || "GET",
+        headers,
+        body: this.chunks.length ? this.chunks.join("") : undefined,
+        credentials: "same-origin",
+        signal: this.controller.signal
+      });
+      const responseHeaders: Record<string, string> = {};
+      response.headers.forEach((value, name) => {
+        responseHeaders[name.toLowerCase()] = value;
+      });
+      const stream = new BrowserResponse(response.status, responseHeaders);
+      this.onResponse?.(stream);
+      if (!response.body) {
+        stream.emit("end");
+        return;
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value) stream.emit("data", decoder.decode(value, { stream: true }));
+      }
+      const tail = decoder.decode();
+      if (tail) stream.emit("data", tail);
+      stream.emit("end");
+    } catch (error) {
+      if ((error as { name?: string })?.name === "AbortError") return;
+      this.emit("error", error instanceof Error ? error : new Error(String(error)));
+    } finally {
+      if (this.timer !== null) window.clearTimeout(this.timer);
+    }
+  }
+
+  /**
+   * Ignis's global fetch shim appends `Origin: app://obsidian.md` before it
+   * forwards cross-origin requests. Hermes rejects that synthetic Origin.
+   * Calling Ignis's same-origin proxy directly preserves Authorization while
+   * avoiding the injected header. Outside Ignis, use ordinary browser fetch.
+   */
+  private async fetch(url: string, init: RequestInit): Promise<Response> {
+    const ignis = window as IgnisWindow;
+    const nativeFetch = ignis.__originalFetch;
+    let isCrossOrigin = false;
+    try {
+      isCrossOrigin = new URL(url, window.location.href).origin !== window.location.origin;
+    } catch {
+      /* ordinary fetch will report an invalid URL */
+    }
+    if (!nativeFetch || !isCrossOrigin) return window.fetch(url, init);
+
+    const headers = new Headers(init.headers);
+    const proxyResponse = await nativeFetch("/api/proxy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({
+        url,
+        method: init.method || "GET",
+        headers: Object.fromEntries(headers.entries()),
+        body: typeof init.body === "string" ? init.body : null,
+        binary: false
+      })
+    });
+    if (!proxyResponse.ok) {
+      const error = await proxyResponse.text();
+      throw new Error(error || `Ignis proxy returned HTTP ${proxyResponse.status}`);
+    }
+    const proxied = (await proxyResponse.json()) as {
+      status: number;
+      headers?: Record<string, string>;
+      body?: string;
+    };
+    const encoded = proxied.body || "";
+    const binary = Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0));
+    return new Response(binary, { status: proxied.status, headers: proxied.headers });
+  }
+}
+
+const browserRequester: Requester = {
+  request: (url: string, options: BrowserRequestOptions, onResponse?: (response: BrowserResponse) => void) =>
+    new BrowserRequest(url, options, onResponse)
+};
+
+function newSessionId(): string {
+  const uuid = window.crypto?.randomUUID?.();
+  return `obs-${Date.now()}-${uuid || Math.random().toString(36).slice(2)}`;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && (error.name === "AbortError" || error.message === "aborted");
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return typeof error === "string" ? error : "Unknown request error";
 }
 
 export class HermesGatewayClient {
@@ -103,12 +297,27 @@ export class HermesGatewayClient {
   }
 
   private authHeaders(): Record<string, string> {
-    const key = (this.getSettings().apiKey || "").trim();
-    return key ? { Authorization: `Bearer ${key}` } : {};
+    const apiKey = this.getSettings().apiKey.trim();
+    return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
   }
 
-  private requester(url: string): typeof http | typeof https {
-    return url.startsWith("https") ? https : http;
+  private nodeRequire(): ((module: string) => { request: Requester["request"] }) | null {
+    const requireFn = (window as Window & { require?: unknown }).require;
+    return typeof requireFn === "function" ? (requireFn as (module: string) => { request: Requester["request"] }) : null;
+  }
+
+  private usesBrowserTransport(): boolean {
+    return this.getSettings().requestTransport === "browser" || !this.nodeRequire();
+  }
+
+  private requester(): Requester {
+    if (this.usesBrowserTransport()) return browserRequester;
+    const requireFn = this.nodeRequire();
+    if (!requireFn) return browserRequester;
+    return {
+      request: (url, options, onResponse) =>
+        requireFn(url.startsWith("https:") ? "https" : "http").request(url, options, onResponse)
+    };
   }
 
   /** One-shot (non-streaming) JSON request used for capabilities/models. */
@@ -119,16 +328,16 @@ export class HermesGatewayClient {
     timeoutMs = 8000
   ): Promise<RawResponse> {
     const url = `${this.base()}${path}`;
-    const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body), "utf-8");
+    const payload = body === undefined ? undefined : JSON.stringify(body);
     const headers: Record<string, string> = { ...this.authHeaders() };
     if (payload) {
       headers["Content-Type"] = "application/json";
-      headers["Content-Length"] = String(payload.length);
+      headers["Content-Length"] = String(new TextEncoder().encode(payload).byteLength);
     }
     return new Promise<RawResponse>((resolve, reject) => {
-      const req = this.requester(url).request(url, { method, headers, timeout: timeoutMs }, (res) => {
+      const req = this.requester().request(url, { method, headers, timeout: timeoutMs }, (res) => {
         let raw = "";
-        res.on("data", (c: Buffer) => (raw += c.toString()));
+        res.on("data", (c: string) => (raw += c));
         res.on("end", () =>
           resolve({ status: res.statusCode || 0, body: raw, headers: res.headers })
         );
@@ -215,25 +424,39 @@ export class HermesGatewayClient {
   /** Probe the gateway and report a user-readable connection status. */
   async testConnection(): Promise<TestResult> {
     try {
-      const caps = await this.getCapabilities(true);
-      const useRuns = supportsRunsTransport(caps);
-      let models: string[] = [];
-      try {
-        models = await this.listModels();
-      } catch {
-        /* models endpoint optional for the test */
-      }
-      if (caps === null && models.length === 0) {
+      const capabilityResponse = await this.jsonRequest("/v1/capabilities", "GET");
+      if (capabilityResponse.status !== 200) {
+        const detail = capabilityResponse.body.trim().replace(/\s+/g, " ").slice(0, 240);
         return {
           ok: false,
-          detail:
-            "Reached the host but got no capabilities/models. Is the Hermes gateway started and the API key correct?"
+          detail: `Gateway returned HTTP ${capabilityResponse.status} for /v1/capabilities${
+            detail ? `: ${detail}` : "."
+          }`
         };
+      }
+      let caps: HermesCapabilities;
+      try {
+        caps = JSON.parse(capabilityResponse.body) as HermesCapabilities;
+      } catch {
+        return {
+          ok: false,
+          detail: "Gateway returned HTTP 200 for /v1/capabilities, but the response was not valid JSON."
+        };
+      }
+      this.capsCache = { value: caps, expiresAt: Date.now() + 60000 };
+      const useRuns = supportsRunsTransport(caps);
+      let models: string[] = [];
+      let modelError = "";
+      try {
+        models = await this.listModels();
+      } catch (e) {
+        /* models endpoint optional for the test */
+        modelError = errorMessage(e);
       }
       return {
         ok: true,
         detail: `Connected. Transport: ${useRuns ? "runs" : "chat"}.${
-          models.length ? ` ${models.length} model(s) available.` : ""
+          models.length ? ` ${models.length} model(s) available.` : modelError ? ` /v1/models unavailable: ${modelError}` : ""
         }`,
         transport: useRuns ? "runs" : "chat",
         models
@@ -243,7 +466,7 @@ export class HermesGatewayClient {
       if (/ECONNREFUSED|timed out|ENOTFOUND|EHOSTUNREACH/i.test(msg)) {
         return {
           ok: false,
-          detail: `Cannot reach the gateway at ${this.base()}. Start the Hermes gateway, then retry: launch Hermes Desktop, or (CLI/TUI install) run \`hermes gateway\`. (${msg})`
+          detail: `Cannot reach the Hermes gateway at ${this.base()}. Check the address and that the gateway is running. (${msg})`
         };
       }
       if (/401|403/.test(msg)) {
@@ -363,13 +586,13 @@ export class HermesGatewayClient {
     if (resumeSessionId) bodyObj.session_id = resumeSessionId;
     if (s.reasoningEffort) bodyObj.reasoning_effort = s.reasoningEffort;
 
-    const payload = Buffer.from(JSON.stringify(bodyObj), "utf-8");
+    const payload = JSON.stringify(bodyObj);
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
-      "Content-Length": String(payload.length),
+      "Content-Length": String(new TextEncoder().encode(payload).byteLength),
       ...this.authHeaders()
     };
-    let sessionId = resumeSessionId || (headers.Authorization ? `obs-${Date.now()}-${randomUUID()}` : "");
+    let sessionId = resumeSessionId || newSessionId();
     if (sessionId) headers["X-Hermes-Session-Id"] = sessionId;
 
     const url = `${this.base()}/v1/chat/completions`;
@@ -397,7 +620,7 @@ export class HermesGatewayClient {
       return false;
     };
 
-    const req = this.requester(url).request(
+    const req = this.requester().request(
       url,
       { method: "POST", headers, timeout: s.requestTimeoutMs },
       (res) => {
@@ -406,7 +629,7 @@ export class HermesGatewayClient {
 
         if (res.statusCode !== 200) {
           let errBody = "";
-          res.on("data", (d: Buffer) => (errBody += d.toString()));
+          res.on("data", (d: string) => (errBody += d));
           res.on("end", () => {
             try {
               const err = JSON.parse(errBody) as { error?: { message?: unknown } };
@@ -420,8 +643,8 @@ export class HermesGatewayClient {
         }
 
         let buffer = "";
-        res.on("data", (chunk: Buffer) => {
-          buffer += chunk.toString();
+        res.on("data", (chunk: string) => {
+          buffer += chunk;
           const parts = buffer.split("\n\n");
           buffer = parts.pop() || "";
           for (const part of parts) {
@@ -441,15 +664,15 @@ export class HermesGatewayClient {
           finish(hasContent ? undefined : lastError || undefined, sessionId);
         });
         res.on("error", (err) => {
-          if (isAborted() || err.name === "AbortError" || err.message === "aborted") return;
-          finish(`Stream error: ${err.message}`);
+          if (isAborted() || isAbortError(err)) return;
+          finish(`Stream error: ${errorMessage(err)}`);
         });
       }
     );
     reqs.push(req);
     req.on("error", (err) => {
-      if (isAborted() || err.name === "AbortError") return;
-      finish(`API request failed: ${err.message}`);
+      if (isAborted() || isAbortError(err)) return;
+      finish(`API request failed: ${errorMessage(err)}`);
     });
     req.on("timeout", () => {
       req.destroy();
@@ -473,7 +696,7 @@ export class HermesGatewayClient {
     const s = this.getSettings();
     const apiUrl = this.base();
     const auth = this.authHeaders();
-    const sessionId = resumeSessionId || (auth.Authorization ? `obs-${Date.now()}-${randomUUID()}` : "");
+    const sessionId = resumeSessionId || newSessionId();
 
     const bodyObj: Record<string, unknown> = {
       model: s.model || "hermes-agent",
@@ -495,10 +718,10 @@ export class HermesGatewayClient {
     if (s.reasoningEffort) bodyObj.reasoning_effort = s.reasoningEffort;
     if (sessionId) bodyObj.session_id = sessionId;
 
-    const payload = Buffer.from(JSON.stringify(bodyObj), "utf-8");
+    const payload = JSON.stringify(bodyObj);
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
-      "Content-Length": String(payload.length),
+      "Content-Length": String(new TextEncoder().encode(payload).byteLength),
       ...auth
     };
     if (sessionId) headers["X-Hermes-Session-Id"] = sessionId;
@@ -506,10 +729,22 @@ export class HermesGatewayClient {
     let runId = "";
     let hasContent = false;
     let fellBack = false;
+    let lastActivity = "";
+    const startedAt = Date.now();
+
+    const reportProgress = (activity: string) => {
+      const elapsed = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
+      const text = `${activity} (${elapsed}s)`;
+      if (text !== lastActivity) {
+        lastActivity = text;
+        cb.onProgress?.(text);
+      }
+    };
 
     const fallback = () => {
       if (fellBack || isAborted()) return;
       fellBack = true;
+      cb.onProgress?.("Retrying with chat transport…");
       this.startChat(input, history, cb, resumeSessionId, reqs, isAborted, finish);
     };
 
@@ -545,11 +780,8 @@ export class HermesGatewayClient {
         return;
       }
       if (name === "run.failed") {
-        if (!hasContent) {
-          fallback();
-          return;
-        }
-        finish(typeof raw.error === "string" && raw.error ? raw.error : "Hermes run failed.");
+        if (!hasContent) fallback();
+        else finish(typeof raw.error === "string" && raw.error ? raw.error : "Hermes run failed.");
         return;
       }
       if (name === "run.cancelled") {
@@ -557,9 +789,6 @@ export class HermesGatewayClient {
         return;
       }
       if (name === "approval.request") {
-        // The agent is asking permission to use a tool (file read/write, search,
-        // terminal). Auto-approve so the vault really is its working directory;
-        // otherwise we'd deadlock or have to fall back to a tool-less reply.
         if (this.getSettings().autoApproveTools !== false && runId) {
           const command = typeof raw.command === "string" ? raw.command : "";
           cb.onToolEvent?.({
@@ -567,21 +796,17 @@ export class HermesGatewayClient {
             status: "completed",
             preview: command ? `auto-approved: ${command}` : "auto-approved"
           });
-          // Respond "always" + resolve_all so repeated identical requests don't
-          // re-prompt; keep listening on the existing event stream.
           this.postRunApproval(apiUrl, runId, "always");
           return;
         }
-        // Manual mode: no approval UI, so cancel + fall back to a plain reply.
         if (runId) this.postRunStop(apiUrl, runId);
         fallback();
-        return;
       }
     };
 
     const openEventStream = (id: string) => {
       const eventsUrl = `${apiUrl}/v1/runs/${encodeURIComponent(id)}/events`;
-      const eventsReq = this.requester(eventsUrl).request(
+      const eventsReq = this.requester().request(
         eventsUrl,
         { method: "GET", headers: auth, timeout: s.requestTimeoutMs },
         (res) => {
@@ -590,8 +815,8 @@ export class HermesGatewayClient {
             return;
           }
           let buffer = "";
-          res.on("data", (chunk: Buffer) => {
-            buffer += chunk.toString();
+          res.on("data", (chunk: string) => {
+            buffer += chunk;
             const parts = buffer.split("\n\n");
             buffer = parts.pop() || "";
             for (const part of parts) {
@@ -615,15 +840,15 @@ export class HermesGatewayClient {
                 }
               }
             }
-            finish(hasContent ? undefined : undefined, sessionId);
+            finish(undefined, sessionId);
           });
         }
       );
       reqs.push(eventsReq);
       eventsReq.on("error", (err) => {
-        if (isAborted() || err.name === "AbortError") return;
+        if (isAborted() || isAbortError(err)) return;
         if (!hasContent) fallback();
-        else finish(`Run event stream failed: ${err.message}`);
+        else finish(`Run event stream failed: ${errorMessage(err)}`);
       });
       eventsReq.on("timeout", () => {
         eventsReq.destroy();
@@ -633,13 +858,118 @@ export class HermesGatewayClient {
       eventsReq.end();
     };
 
+    // Ignis buffers upstream SSE, so only the browser path polls status.
+    const pollRun = (id: string) => {
+      let timer: number | null = null;
+      let stopped = false;
+      let approvalSubmitted = false;
+      const stopPolling = () => {
+        stopped = true;
+        if (timer !== null) window.clearTimeout(timer);
+      };
+      reqs.push({ destroy: stopPolling });
+
+      const scheduleNext = () => {
+        if (!stopped && !isAborted()) timer = window.setTimeout(poll, 1500);
+      };
+
+      const poll = () => {
+        if (stopped || isAborted()) return;
+        reportProgress("Hermes is working");
+        const statusUrl = `${apiUrl}/v1/runs/${encodeURIComponent(id)}`;
+        const statusReq = this.requester().request(
+          statusUrl,
+          { method: "GET", headers: auth, timeout: 10000 },
+          (res) => {
+            let raw = "";
+            res.on("data", (chunk: string) => (raw += chunk));
+            res.on("end", () => {
+              if (stopped || isAborted()) return;
+              if (res.statusCode !== 200) {
+                stopPolling();
+                finish(`Run status request returned ${res.statusCode}: ${raw.slice(0, 240)}`);
+                return;
+              }
+              let status: Record<string, unknown>;
+              try {
+                status = JSON.parse(raw) as Record<string, unknown>;
+              } catch {
+                stopPolling();
+                finish("Gateway returned an invalid run status response.");
+                return;
+              }
+
+              const state = typeof status.status === "string" ? status.status : "";
+              const lastEvent = typeof status.last_event === "string" ? status.last_event : "";
+              if (state === "queued") reportProgress("Waiting in the queue");
+              else if (state === "waiting_for_approval") reportProgress("Waiting for tool approval");
+              else if (lastEvent === "reasoning.available") reportProgress("Analyzing the request");
+              else if (lastEvent === "tool.started") reportProgress("Running a tool");
+              else if (lastEvent === "tool.completed") reportProgress("Continuing after a tool completed");
+              if (state === "completed") {
+                stopPolling();
+                const output = typeof status.output === "string" ? status.output : "";
+                if (output && !hasContent) {
+                  hasContent = true;
+                  cb.onChunk(output);
+                }
+                const usage = runCompletedUsage({ event: "run.completed", usage: status.usage });
+                if (usage) cb.onUsage?.(usage);
+                finish(undefined, sessionId);
+                return;
+              }
+              if (state === "failed") {
+                stopPolling();
+                if (!hasContent) fallback();
+                else finish(typeof status.error === "string" && status.error ? status.error : "Hermes run failed.");
+                return;
+              }
+              if (state === "cancelled") {
+                stopPolling();
+                finish("Hermes run was cancelled.", sessionId);
+                return;
+              }
+              if (state === "waiting_for_approval") {
+                if (this.getSettings().autoApproveTools !== false && !approvalSubmitted) {
+                  approvalSubmitted = true;
+                  this.postRunApproval(apiUrl, id, "always");
+                } else if (this.getSettings().autoApproveTools === false) {
+                  stopPolling();
+                  this.postRunStop(apiUrl, id);
+                  fallback();
+                  return;
+                }
+              }
+              scheduleNext();
+            });
+          }
+        );
+        reqs.push(statusReq);
+        statusReq.on("error", (err) => {
+          if (stopped || isAborted() || isAbortError(err)) return;
+          stopPolling();
+          finish(`Run status request failed: ${errorMessage(err)}`);
+        });
+        statusReq.on("timeout", () => {
+          statusReq.destroy();
+          if (stopped || isAborted()) return;
+          stopPolling();
+          finish("Run status request timed out.");
+        });
+        statusReq.end();
+      };
+
+      poll();
+    };
+
     const startUrl = `${apiUrl}/v1/runs`;
-    const startReq = this.requester(startUrl).request(
+    cb.onProgress?.("Submitting request to Hermes…");
+    const startReq = this.requester().request(
       startUrl,
       { method: "POST", headers, timeout: 30000 },
       (res) => {
         let raw = "";
-        res.on("data", (c: Buffer) => (raw += c.toString()));
+        res.on("data", (c: string) => (raw += c));
         res.on("end", () => {
           if (res.statusCode !== 200 && res.statusCode !== 202) {
             fallback();
@@ -655,13 +985,15 @@ export class HermesGatewayClient {
             fallback();
             return;
           }
-          openEventStream(runId);
+          cb.onProgress?.(this.usesBrowserTransport() ? "Request accepted. Checking progress…" : "Request accepted. Opening event stream…");
+          if (this.usesBrowserTransport()) pollRun(runId);
+          else openEventStream(runId);
         });
       }
     );
     reqs.push(startReq);
     startReq.on("error", (err) => {
-      if (isAborted() || err.name === "AbortError") return;
+      if (isAborted() || isAbortError(err)) return;
       fallback();
     });
     startReq.on("timeout", () => {
@@ -675,7 +1007,7 @@ export class HermesGatewayClient {
   private postRunStop(apiUrl: string, runId: string): void {
     const url = `${apiUrl}/v1/runs/${encodeURIComponent(runId)}/stop`;
     try {
-      const req = this.requester(url).request(url, { method: "POST", headers: this.authHeaders() });
+      const req = this.requester().request(url, { method: "POST", headers: this.authHeaders() });
       req.on("error", () => {});
       req.end();
     } catch {
@@ -691,13 +1023,13 @@ export class HermesGatewayClient {
   ): void {
     const url = `${apiUrl}/v1/runs/${encodeURIComponent(runId)}/approval`;
     try {
-      const payload = Buffer.from(JSON.stringify({ choice, resolve_all: true }), "utf-8");
+      const payload = JSON.stringify({ choice, resolve_all: true });
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
-        "Content-Length": String(payload.length),
+        "Content-Length": String(new TextEncoder().encode(payload).byteLength),
         ...this.authHeaders()
       };
-      const req = this.requester(url).request(url, { method: "POST", headers });
+      const req = this.requester().request(url, { method: "POST", headers });
       req.on("error", () => {});
       req.write(payload);
       req.end();
