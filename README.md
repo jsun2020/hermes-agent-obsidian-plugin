@@ -142,6 +142,69 @@ Open Settings -> Hermes Agent:
 - **Transport** — `Auto` recommended.
 - Optional: reasoning effort, include-full-note-content, request timeout, max tabs.
 
+### Remote gateway (e.g. over Tailscale)
+
+The plugin talks straight to the gateway's OpenAI-compatible **API server** (default port `8642`),
+so Obsidian and the agent don't have to run on the same machine. A common topology: Obsidian (and
+Hermes Desktop) on a Mac, the agent backend on a Linux host reachable over Tailscale.
+
+```text
+Obsidian plugin on Mac
+        |
+        |  HTTP(S) over Tailscale, Authorization: Bearer <API_SERVER_KEY>
+        v
+Hermes API server on Linux :8642
+        |
+        v
+Linux Hermes agent, tools, sessions and model
+```
+
+Things that trip people up:
+
+- **The plugin does not reuse Hermes Desktop's remote connection.** Desktop's remote mode connects
+  to the `hermes serve` dashboard (commonly port `9119`) with dashboard auth. The plugin needs the
+  API server on `8642` and its own `API_SERVER_KEY`. Port `9119` is not a substitute.
+- **`API_SERVER_KEY` is a secret you generate**, on the machine that runs the API server. It is not
+  a model-provider key and not the Desktop connection token.
+- **The API server binds to `127.0.0.1` by default**, which is unreachable from other machines no
+  matter what your firewall or Tailscale ACLs allow. Bind it to the host's Tailscale address.
+
+On the gateway host, set (in `~/.hermes/.env`, or the equivalent `platforms.api_server.extra`
+keys in `config.yaml`) and restart the gateway:
+
+```dotenv
+API_SERVER_ENABLED=true
+API_SERVER_HOST=<linux-tailscale-ip>   # not 127.0.0.1; prefer this over 0.0.0.0
+API_SERVER_PORT=8642
+API_SERVER_KEY=<output of: openssl rand -hex 32>
+```
+
+```bash
+hermes gateway restart
+ss -ltnp 'sport = :8642'                          # must show the Tailscale IP, not 127.0.0.1
+curl http://<linux-tailscale-ip>:8642/health
+```
+
+Then, in the plugin settings on the Mac, set **Gateway base URL** to
+`http://<linux-tailscale-ip>:8642`, **API key** to the generated key, **Transport** to `Auto`, and
+click **Test connection**. To check auth outside Obsidian:
+
+```bash
+curl -H "Authorization: Bearer <API_SERVER_KEY>" http://<linux-tailscale-ip>:8642/v1/models
+```
+
+Security: the API server exposes the agent's **full toolset** (terminal, filesystem, ...) to
+anyone holding the key. Use a long random key, bind to the specific tailnet address rather than
+`0.0.0.0`, don't expose the port to the public internet, and prefer HTTPS (a reverse proxy,
+Tailscale Serve, or a tunnel) if the traffic leaves a network you trust. Note that the agent's
+file tools act on the **server's** filesystem, so the vault must be reachable there (synced copy,
+mount, ...) for file access to work; the "current note" / "selection" toggles work regardless
+because they embed the text in the prompt.
+
+Some Hermes CLI versions print `'gateway.api_server.host' is not a recognized config key` from
+`hermes config set` even though the runtime honors the setting. That warning comes from the CLI's
+validator, not from this plugin; if the listener shows the right address, the config is working.
+
 ### Agent workspace (file access)
 
 This is what makes Hermes a real collaborator instead of a chatbot: the vault becomes the
@@ -309,3 +372,9 @@ contradictions.
   model id manually.
 - **Wrong port** — named profiles bind 8643-8742; check `platforms.api_server.extra.port` in
   `~/.hermes/config.yaml` and set the base URL accordingly.
+- **Connection refused / timeout to a remote gateway** — a listener, bind-address, firewall or
+  Tailscale-policy problem, not an auth problem. Check the listener first (`ss -ltnp 'sport = :8642'`):
+  a gateway bound to `127.0.0.1` is not remotely reachable. See *Remote gateway* above.
+- **Model menu in the chat footer shows an error notice** — the gateway's `/v1/models` request
+  failed or timed out; the notice and the developer console (`[hermes-agent] listModels failed`)
+  carry the reason. "Auto-detect" stays selectable.
