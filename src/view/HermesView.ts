@@ -58,7 +58,16 @@ interface Tab {
   lastPromptTokens: number; // latest turn's prompt tokens = current context occupancy
   greeting?: string; // chosen empty-state greeting (kept stable per tab)
   historyId: string; // stable id for upserting this tab into the history store
+  /**
+   * True while the user is at (or near) the bottom of the chat, i.e. we should
+   * keep following streamed output. Updated from scroll events, so a single
+   * large chunk of new content can't make us lose the tail.
+   */
+  pinned: boolean;
 }
+
+/** Distance from the bottom (px) within which the chat counts as "at the bottom". */
+const PIN_THRESHOLD_PX = 64;
 
 export class HermesView extends ItemView {
   private plugin: HermesPlugin;
@@ -71,6 +80,7 @@ export class HermesView extends ItemView {
   private includeNoteToggle!: HTMLInputElement;
   private includeSelectionToggle!: HTMLInputElement;
   private statusEl!: HTMLElement;
+  private modelMenuLoading = false;
   private metaModelEl!: HTMLElement;
   private metaThinkingEl!: HTMLElement;
   private metaTokensEl!: HTMLElement;
@@ -272,8 +282,14 @@ export class HermesView extends ItemView {
       tabButtonEl,
       tokensUsed: 0,
       lastPromptTokens: 0,
-      historyId: id
+      historyId: id,
+      pinned: true
     };
+    bodyEl.addEventListener("scroll", () => {
+      // Hidden tabs report 0 sizes; ignore those so they stay pinned.
+      if (!bodyEl.clientHeight) return;
+      tab.pinned = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < PIN_THRESHOLD_PX;
+    });
     this.renderGreeting(tab);
 
     const label = tabButtonEl.createSpan({ cls: "hermes-tab-label", text: tab.title });
@@ -424,15 +440,26 @@ export class HermesView extends ItemView {
    * a model id by hand.
    */
   private async showModelMenu(evt: MouseEvent): Promise<void> {
-    const menu = new Menu();
-    menu.addItem((item) => item.setTitle("Loading models...").setDisabled(true));
-    menu.showAtMouseEvent(evt);
+    if (this.modelMenuLoading) return;
+    // Capture the position now: the event is stale after the await below.
+    const pos = { x: evt.clientX, y: evt.clientY };
 
+    // Fetch the list BEFORE showing anything and show a single menu once.
+    // The old "Loading models..." placeholder + hide() + show() sequence raced
+    // on newer Obsidian builds (the second menu was dismissed by the first
+    // one's close event), leaving the chip apparently stuck on "Loading".
+    // listModels() has its own request timeout, so this always settles.
     let models: string[] = [];
+    let loadError = "";
+    this.modelMenuLoading = true;
     try {
       models = await this.client.listModels();
-    } catch {
-      /* fall through with an empty list — the "auto-detect" item still works */
+    } catch (err) {
+      loadError = err instanceof Error ? err.message : String(err);
+      console.error("[hermes-agent] listModels failed:", err);
+      new Notice(`Hermes: failed to load models: ${loadError}`);
+    } finally {
+      this.modelMenuLoading = false;
     }
 
     const current = this.plugin.settings.model || "";
@@ -445,7 +472,13 @@ export class HermesView extends ItemView {
     );
     if (models.length === 0) {
       rebuilt.addItem((item) =>
-        item.setTitle("No models reported by gateway — check connection in Settings").setDisabled(true)
+        item
+          .setTitle(
+            loadError
+              ? "Could not load models — check connection in Settings"
+              : "No models reported by gateway — check connection in Settings"
+          )
+          .setDisabled(true)
       );
     }
     for (const id of models) {
@@ -456,8 +489,7 @@ export class HermesView extends ItemView {
           .onClick(() => void this.setModel(id))
       );
     }
-    menu.hide();
-    rebuilt.showAtMouseEvent(evt);
+    rebuilt.showAtPosition(pos);
   }
 
   private async setModel(id: string): Promise<void> {
@@ -684,7 +716,8 @@ export class HermesView extends ItemView {
     msg.createDiv({ cls: "hermes-msg-role", text: "You" });
     msg.createDiv({ cls: "hermes-msg-content", text });
     if (ctx) this.renderAttachments(msg, ctx);
-    this.scrollToBottom(tab);
+    // A new user message is an explicit action: always jump to it.
+    this.scrollToBottom(tab, true);
   }
 
   /**
@@ -766,13 +799,15 @@ export class HermesView extends ItemView {
     if (e.preview) line.createSpan({ cls: "hermes-tool-preview", text: ` ${e.preview}` });
   }
 
-  private scrollToBottom(tab: Tab): void {
-    // Only follow the tail when the user is already there; otherwise leave
-    // them at their chosen scroll position (e.g. reading history).
-    const el = tab.bodyEl;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 64) {
-      el.scrollTop = el.scrollHeight;
-    }
+  /**
+   * Follow the tail only while the user is pinned to the bottom; otherwise
+   * leave them where they scrolled (e.g. reading history mid-stream). Pass
+   * `force` for explicit actions (sending a message, restoring a chat).
+   */
+  private scrollToBottom(tab: Tab, force = false): void {
+    if (!force && !tab.pinned) return;
+    tab.pinned = true;
+    tab.bodyEl.scrollTop = tab.bodyEl.scrollHeight;
   }
 
   // ---- chat history ----
@@ -887,7 +922,7 @@ export class HermesView extends ItemView {
       }
       // system messages are context-only and not shown in the UI
     });
-    this.scrollToBottom(tab);
+    this.scrollToBottom(tab, true);
   }
 }
 
