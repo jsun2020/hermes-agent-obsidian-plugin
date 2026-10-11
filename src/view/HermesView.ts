@@ -764,7 +764,12 @@ export class HermesView extends ItemView {
   }
 
   private scrollToBottom(tab: Tab): void {
-    tab.bodyEl.scrollTop = tab.bodyEl.scrollHeight;
+    // Only follow the tail when the user is already there; otherwise leave
+    // them at their chosen scroll position (e.g. reading history).
+    const el = tab.bodyEl;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 64) {
+      el.scrollTop = el.scrollHeight;
+    }
   }
 
   // ---- chat history ----
