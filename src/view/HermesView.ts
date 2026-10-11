@@ -196,8 +196,11 @@ export class HermesView extends ItemView {
       else void this.onSend();
     };
 
-    // First tab
+    // Restore the newest saved conversation after a reload. The old behavior
+    // always opened a blank tab, which made persisted conversations look lost.
     this.newTab();
+    const latest = this.getConversations()[0];
+    if (latest) this.restoreConversation(latest.id);
     this.refreshMetaBar();
     // Resolve the real model name / context window from the gateway (async).
     void this.loadResolvedModel();
