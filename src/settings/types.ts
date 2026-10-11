@@ -7,7 +7,7 @@ export interface HermesSettings {
   baseUrl: string;
   /** API_SERVER_KEY from ~/.hermes/.env, pasted by the user (decision D1). */
   apiKey: string;
-  /** Model id (e.g. "gpt-5.5"). Empty -> the gateway's "hermes-agent" default. */
+  /** Model id (e.g. "gpt-5.5"). Empty -> no model is sent and the gateway applies its own default. */
   model: string;
   /**
    * Which transport to use against the gateway:

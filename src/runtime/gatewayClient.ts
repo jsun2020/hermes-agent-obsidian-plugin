@@ -476,10 +476,14 @@ export class HermesGatewayClient {
     const sessionId = resumeSessionId || (auth.Authorization ? `obs-${Date.now()}-${randomUUID()}` : "");
 
     const bodyObj: Record<string, unknown> = {
-      model: s.model || "hermes-agent",
       input,
       conversation_history: history.map((m) => ({ role: m.role, content: m.content }))
     };
+    // Empty Model setting = auto-detect: omit the field so the gateway applies
+    // its own default. Sending a placeholder ("hermes-agent") makes the Runs
+    // endpoint forward it verbatim to the provider -> HTTP 400 "Unknown Model".
+    const explicitModel = (s.model || "").trim();
+    if (explicitModel) bodyObj.model = explicitModel;
     const folder = this.workingFolderPath();
     const instructions = buildSystemInstructions(folder, {
       markdownFormattingEnabled: s.markdownFormattingPromptEnabled,
