@@ -4,6 +4,7 @@
 // owns its own conversation state, messages container, and in-flight handle.
 
 import { App, ItemView, WorkspaceLeaf, MarkdownRenderer, Menu, Modal, setIcon, Notice } from "obsidian";
+import { ApprovalModal } from "./ApprovalModal";
 import type HermesPlugin from "../main";
 import { ChatHandle, ChatMessage, HermesGatewayClient, ToolEvent, UsageInfo } from "../runtime/gatewayClient";
 import { resolveWorkingFolder } from "../runtime/context";
@@ -665,6 +666,7 @@ export class HermesView extends ItemView {
           this.renderToolEvent(assistant, e);
           this.scrollToBottom(tab);
         },
+        onApprovalRequest: (request) => new ApprovalModal(this.app, request).wait(),
         onUsage: (u: UsageInfo) => {
           assistant.usageEl.setText(
             `tokens: ${u.totalTokens} (in ${u.promptTokens} / out ${u.completionTokens})`

@@ -353,6 +353,21 @@ contradictions.
   reopening the view shows your previous graph instead of a blank canvas. Re-run **Analyze vault** to
   refresh it. Like the chat, this needs the gateway reachable and a model configured.
 
+## Mobile (iPad, iPhone, Android)
+
+The plugin also runs in Obsidian Mobile. A phone or tablet cannot run Hermes itself, so it talks to a gateway on another machine you can reach — typically your desktop or a home server over a private network such as Tailscale. Desktop behaviour is unchanged.
+
+What differs on mobile:
+
+- **Network:** requests use `fetch` and replies still stream token by token. The gateway must allow the Obsidian app origin via CORS, e.g. in the gateway's `.env`:
+  `API_SERVER_CORS_ORIGINS=app://obsidian.md,capacitor://localhost,http://localhost`
+  (`capacitor://localhost` is iOS/iPadOS, `http://localhost` is Android). Without CORS the plugin falls back to Obsidian's `requestUrl`, which works but delivers the reply in one piece.
+- **HTTPS:** iOS blocks plain `http://` to other hosts, so serve the gateway over HTTPS (e.g. `tailscale serve --https=8443 http://127.0.0.1:8642`) and use that URL as *Gateway base URL*.
+- **Profile:** for a gateway that serves several Hermes profiles, set *Profile* (requests go to `/p/<profile>/`) together with that profile's own API key.
+- **Working folder:** the vault path on the device means nothing to a remote gateway. Set *Working folder* to the absolute path where the gateway sees the (synced) vault, or leave it empty and let the profile's own working directory apply.
+- **Approvals:** with *Auto-approve tool requests* off, each tool call opens a dialog (allow once / for this chat / always / deny). This works on desktop too.
+- Reading the local Hermes `config.yaml` for the model footer is desktop-only; on mobile the footer uses the gateway's `/v1/models`.
+
 ## Manual test checklist
 
 1. With Hermes Desktop running, open settings and click **Test connection** -> expect

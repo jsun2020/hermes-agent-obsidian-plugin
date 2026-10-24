@@ -47,6 +47,22 @@ export class HermesSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Profile")
+      .setDesc(
+        "Only for a gateway that serves several Hermes profiles: requests go to /p/<profile>/ and the profile's own API key is required. Leave empty for the default profile."
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("e.g. work")
+          .setValue(this.plugin.settings.profile)
+          .onChange(async (v) => {
+            this.plugin.settings.profile = v.trim();
+            await this.plugin.saveSettings();
+            this.plugin.reloadModelInViews();
+          })
+      );
+
+    new Setting(containerEl)
       .setName("API key (API_SERVER_KEY)")
       .setDesc("Paste the API_SERVER_KEY from ~/.hermes/.env. Required for session continuity and auth.")
       .addText((text) => {
@@ -118,7 +134,7 @@ export class HermesSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Auto-approve tool requests")
       .setDesc(
-        "Let the agent use file read/write, search, and terminal tools without prompting. This grants it real read/write access to the working folder. Turn off to get plain (tool-less) replies instead."
+        "Let the agent use file read/write, search, and terminal tools without prompting. This grants it real read/write access to the working folder. Turn off to be asked before each tool use (a dialog lets you allow once, for this chat, always, or deny)."
       )
       .addToggle((tg) =>
         tg.setValue(this.plugin.settings.autoApproveTools).onChange(async (v) => {

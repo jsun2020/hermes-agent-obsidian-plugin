@@ -21,7 +21,11 @@ import {
   greetingOptions,
   parseConfigModel,
   parseContextLengthCache,
-  sanitizeProfileName
+  sanitizeProfileName,
+  profileBaseUrl,
+  approvalRequestFromEvent,
+  approvalResponseBody,
+  runStopBody
 } from "./.build/protocol.mjs";
 
 test("parseSseBlock parses data-only blocks with CRLF", () => {
@@ -211,4 +215,40 @@ test("sanitizeProfileName rejects traversal, separators, and junk", () => {
   assert.equal(sanitizeProfileName("a\b"), "");
   assert.equal(sanitizeProfileName(".hidden"), "");
   assert.equal(sanitizeProfileName("x".repeat(65)), "");
+});
+
+test("profileBaseUrl adds the /p/<profile> prefix only when a profile is set", () => {
+  assert.equal(profileBaseUrl("https://host:8443/", ""), "https://host:8443");
+  assert.equal(profileBaseUrl("https://host:8443/v1", "work"), "https://host:8443/p/work");
+  assert.equal(profileBaseUrl("http://127.0.0.1:8642", "/p/work/"), "http://127.0.0.1:8642/p/work");
+  assert.equal(profileBaseUrl("http://127.0.0.1:8642", "  "), "http://127.0.0.1:8642");
+});
+
+test("approvalRequestFromEvent reads command, reason and offered choices", () => {
+  const r = approvalRequestFromEvent({
+    event: "approval.request",
+    command: "rm notes/old.md",
+    description: "dangerous command",
+    choices: ["once", "session", "deny", "bogus"]
+  });
+  assert.deepEqual(r, { command: "rm notes/old.md", description: "dangerous command", choices: ["once", "session", "deny"] });
+  assert.deepEqual(approvalRequestFromEvent({}).choices, ["once", "deny"]);
+});
+
+test("approvalResponseBody matches the gateway mode", () => {
+  const authority = approvalRequestFromEvent({ command: "rm -rf x", request_id: "p1", execution_generation: 3, choices: ["once", "deny"] });
+  assert.deepEqual(approvalResponseBody(authority, "once"), { request_id: "p1", execution_generation: 3, choice: "once" });
+  const legacy = approvalRequestFromEvent({ command: "rm -rf x" });
+  assert.deepEqual(approvalResponseBody(legacy, "always"), { choice: "always", resolve_all: true });
+  assert.deepEqual(approvalResponseBody(null, "deny"), { choice: "deny", resolve_all: false });
+});
+
+test("runStopBody uses admission id and generation when present", () => {
+  assert.deepEqual(runStopBody({ admission_id: "a1", execution_generation: 4, status: "started" }), { admission_id: "a1", execution_generation: 4 });
+  assert.equal(runStopBody({ status: "completed" }), undefined);
+});
+
+test("approvalRequestFromEvent reads prompt_id from /v1/runs events", () => {
+  const r = approvalRequestFromEvent({ event: "approval.request", prompt_id: "abc", execution_generation: 3, command: "rm -rf X", choices: ["once", "deny"] });
+  assert.deepEqual(approvalResponseBody(r, "once"), { request_id: "abc", execution_generation: 3, choice: "once" });
 });

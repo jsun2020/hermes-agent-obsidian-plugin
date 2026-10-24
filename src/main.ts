@@ -1,7 +1,8 @@
-import { FileSystemAdapter, MarkdownView, Notice, Plugin, WorkspaceLeaf, normalizePath } from "obsidian";
-import * as fs from "fs";
-import * as os from "os";
-import * as path from "path";
+import { FileSystemAdapter, MarkdownView, Notice, Platform, Plugin, WorkspaceLeaf, normalizePath } from "obsidian";
+import type * as FsModule from "fs";
+import type * as OsModule from "os";
+import type * as PathModule from "path";
+import { createFetchTransport, createNodeTransport } from "./runtime/transport";
 import { DEFAULT_SETTINGS, HermesSettings } from "./settings/types";
 import { HermesSettingTab } from "./settings/HermesSettingTab";
 import { HermesView, VIEW_TYPE_HERMES } from "./view/HermesView";
@@ -17,6 +18,31 @@ import {
   serializeHistoryFile,
   upsertConversation
 } from "./runtime/history";
+
+/**
+ * Node built-ins exist only in the desktop app. They are loaded lazily so the
+ * plugin also starts on iOS/Android, where reading the local Hermes home is
+ * simply skipped.
+ */
+interface NodeModules {
+  fs: typeof FsModule;
+  os: typeof OsModule;
+  path: typeof PathModule;
+}
+function nodeModules(): NodeModules | null {
+  if (!Platform.isDesktopApp) return null;
+  try {
+    /* eslint-disable @typescript-eslint/no-require-imports */
+    return {
+      fs: require("fs") as typeof FsModule,
+      os: require("os") as typeof OsModule,
+      path: require("path") as typeof PathModule
+    };
+    /* eslint-enable @typescript-eslint/no-require-imports */
+  } catch {
+    return null;
+  }
+}
 
 export default class HermesPlugin extends Plugin {
   settings!: HermesSettings;
@@ -58,7 +84,8 @@ export default class HermesPlugin extends Plugin {
     await this.loadHistory();
     this.client = new HermesGatewayClient(
       () => this.settings,
-      () => this.getVaultBasePath()
+      () => this.getVaultBasePath(),
+      Platform.isDesktopApp ? createNodeTransport() : createFetchTransport()
     );
 
     this.registerView(VIEW_TYPE_HERMES, (leaf) => new HermesView(leaf, this));
@@ -325,6 +352,9 @@ export default class HermesPlugin extends Plugin {
    * `~/.hermes`. The gateway runs on this same machine, so these are readable.
    */
   private hermesHomeCandidates(): string[] {
+    const node = nodeModules();
+    if (!node) return [];
+    const { os, path } = node;
     const homes: string[] = [];
     const configured = (this.settings.hermesHome || "").trim();
     if (configured) homes.push(configured);
@@ -354,6 +384,9 @@ export default class HermesPlugin extends Plugin {
    * itself, preserving the pre-profile behavior.
    */
   private activeProfileDir(home: string): string {
+    const node = nodeModules();
+    if (!node) return "";
+    const { fs, path } = node;
     try {
       const marker = path.join(home, "active_profile");
       if (!fs.existsSync(marker)) return "";
@@ -372,6 +405,9 @@ export default class HermesPlugin extends Plugin {
    * meta-label). Returns null when no config.yaml can be found/parsed.
    */
   readHermesModelConfig(): { model: string; contextWindow?: number } | null {
+    const node = nodeModules();
+    if (!node) return null;
+    const { fs, path } = node;
     for (const home of this.hermesHomeCandidates()) {
       try {
         const cfgPath = path.join(home, "config.yaml");

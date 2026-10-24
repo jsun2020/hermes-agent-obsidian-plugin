@@ -7,6 +7,8 @@ export interface HermesSettings {
   baseUrl: string;
   /** API_SERVER_KEY from ~/.hermes/.env, pasted by the user (decision D1). */
   apiKey: string;
+  /** Profile of a multi-profile gateway, sent as /p/<profile>/ (empty = default). */
+  profile: string;
   /** Model id (e.g. "gpt-5.5"). Empty -> no model is sent and the gateway applies its own default. */
   model: string;
   /**
@@ -75,6 +77,7 @@ export interface HermesSettings {
 export const DEFAULT_SETTINGS: HermesSettings = {
   baseUrl: "http://127.0.0.1:8642",
   apiKey: "",
+  profile: "",
   model: "",
   transport: "auto",
   reasoningEffort: "",

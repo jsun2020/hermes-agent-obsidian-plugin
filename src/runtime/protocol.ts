@@ -267,3 +267,70 @@ export function greetingOptions(userName: string): string[] {
     name ? `Hi ${name}, how can I help?` : "How can I help you today?"
   ];
 }
+
+// ---- approvals + multi-profile gateways -----------------------------------
+
+export type ApprovalChoice = "once" | "session" | "always" | "deny";
+
+export interface ApprovalRequest {
+  /** What the agent wants to run (already redacted by the gateway). */
+  command: string;
+  /** Why the gateway flagged it, when provided. */
+  description: string;
+  /** Answers the gateway accepts for this request. */
+  choices: ApprovalChoice[];
+  /** Id of the pending prompt (session-authority gateways). */
+  requestId?: string;
+  /** Execution generation the prompt belongs to (session-authority gateways). */
+  executionGeneration?: number;
+}
+
+/** Read an `approval.request` run event into an ApprovalRequest. */
+export function approvalRequestFromEvent(raw: Record<string, unknown>): ApprovalRequest {
+  const all: ApprovalChoice[] = ["once", "session", "always", "deny"];
+  const offered = Array.isArray(raw.choices)
+    ? all.filter((c) => (raw.choices as unknown[]).includes(c))
+    : [];
+  const text = (v: unknown) => (typeof v === "string" ? v : "");
+  // `prompt_id` on /v1/runs events, `request_id` on other surfaces.
+  const requestId = text(raw.request_id) || text(raw.prompt_id);
+  const generation = raw.execution_generation;
+  return {
+    command: text(raw.command),
+    description: text(raw.description) || text(raw.reason) || text(raw.pattern_key),
+    choices: offered.length ? offered : ["once", "deny"],
+    ...(requestId ? { requestId } : {}),
+    ...(typeof generation === "number" && Number.isInteger(generation) ? { executionGeneration: generation } : {})
+  };
+}
+
+/**
+ * Body for POST /v1/runs/{id}/approval. Gateways running the session authority
+ * accept exactly {request_id, execution_generation, choice} (taken from the
+ * approval.request event); older gateways take {choice, resolve_all}.
+ */
+export function approvalResponseBody(request: ApprovalRequest | null, choice: ApprovalChoice): Record<string, unknown> {
+  if (request?.requestId && request.executionGeneration !== undefined) {
+    return { request_id: request.requestId, execution_generation: request.executionGeneration, choice };
+  }
+  // "always"/"session" also settle identical pending requests; "once"/"deny"
+  // answer only the request the user saw.
+  return { choice, resolve_all: choice === "always" || choice === "session" };
+}
+
+/** Base URL plus the optional `/p/<profile>` prefix of a multi-profile gateway. */
+export function profileBaseUrl(baseUrl: string, profile: string | undefined): string {
+  const base = normaliseBaseUrl(baseUrl);
+  const name = (profile || "").trim().replace(/^\/+|\/+$/g, "").replace(/^p\//, "");
+  return name ? `${base}/p/${encodeURIComponent(name)}` : base;
+}
+
+/** Body for POST /v1/runs/{id}/stop, built from GET /v1/runs/{id}. */
+export function runStopBody(run: Record<string, unknown>): Record<string, unknown> | undefined {
+  const admission = run.admission_id;
+  const generation = run.execution_generation;
+  if (typeof admission === "string" && admission && typeof generation === "number" && Number.isInteger(generation)) {
+    return { admission_id: admission, execution_generation: generation };
+  }
+  return undefined;
+}
